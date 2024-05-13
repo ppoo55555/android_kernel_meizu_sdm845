@@ -353,4 +353,12 @@ config ARCH_ZYNQMP
 	help
 	  This enables support for Xilinx ZynqMP Family
 
+config MACH_MEIZU_SDM845
+	bool "Meizu SDM845 Phones Family"
+	select ARCH_QCOM
+	select ARCH_SDM845
+	help
+	  This enables support for Meizu SDM845-based smartphones,
+	  like Meizu 16th and Meizu 16th Plus.
+
 endmenu
