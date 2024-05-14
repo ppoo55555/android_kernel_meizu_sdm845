@@ -44,7 +44,7 @@
 
 
 //#define AWINIC_I2C_REGMAP
-//#define AWINIC_RAM_UPDATE_DELAY
+#define AWINIC_RAM_UPDATE_DELAY
 
 #define AW_I2C_RETRIES 2
 #define AW_I2C_RETRY_DELAY 2
@@ -253,9 +253,6 @@ static void aw869x_rtp_loaded(const struct firmware *cont, void *context)
 
     aw869x->rtp_init = 1;
     pr_debug("%s: rtp update complete\n", __func__);
-
-    /* Vibrate for 1 second as TI drv2624's auto-calibration does */
-    aw869x_vibrate(aw869x, 1000);
 }
 
 static int aw869x_rtp_update(struct aw869x *aw869x)
