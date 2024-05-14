@@ -1,0 +1,132 @@
+/*
+ * Copyright (c) 2024, MeizuCustoms enthusiasts
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+
+&soc {
+	lcd_vddio_regulator: lcd_vddio_fixed_regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "lcd_vddio_regulator";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-boot-on;
+		enable-active-high;
+
+		gpio = <&tlmm 51 0x0>;
+	};
+
+	lcd_vdd_regulator: lcd_vdd_fixed_regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "lcd_vdd_regulator";
+		regulator-min-microvolt = <3000000>;
+		regulator-max-microvolt = <3000000>;
+		regulator-boot-on;
+		enable-active-high;
+
+		gpio = <&tlmm 26 0x0>;
+	};
+
+    rpmh-regulator-ldoa21 {
+        status = "disabled";
+    };
+};
+
+&qupv3_se14_i2c {
+    status = "ok";
+
+    cam_pmic1@50 {
+        compatible = "meizu,ext_twl80125";
+        reg = <0x50>;
+        gpios = <&tlmm 21 0x00>;
+        cam_pmic_io-supply = <&pm8998_s4>;
+        regulator-names = "cam_pmic_io";
+        rgltr-cntrl-support;
+        rgltr-min-voltage = <1800000>;
+        rgltr-max-voltage = <1800000>;
+        rgltr-load-current = <100000>;
+
+        ldo_regulators {
+            ext_twl_ldo1_ldo_reg: ldo_twl_ldo1 {
+                regulator-name = "twl_ldo1";
+                regulator-min-microvolt = <1200000>;
+                regulator-max-microvolt = <3000000>;
+                regulator-enable-ramp-delay = <264>;
+            };
+
+            ext_twl_ldo2_ldo_reg: ldo_twl_ldo2 {
+                regulator-name = "twl_ldo2";
+                regulator-min-microvolt = <1200000>;
+                regulator-max-microvolt = <3000000>;
+                regulator-enable-ramp-delay = <264>;
+            };
+
+            ext_twl_ldo3_ldo_reg: ldo_twl_ldo3 {
+                regulator-name = "twl_ldo3";
+                regulator-min-microvolt = <1200000>;
+                regulator-max-microvolt = <3000000>;
+                regulator-enable-ramp-delay = <264>;
+            };
+
+            ext_twl_ldo4_ldo_reg: ldo_twl_ldo4 {
+                regulator-name = "twl_ldo4";
+                regulator-min-microvolt = <1200000>;
+                regulator-max-microvolt = <3000000>;
+                regulator-enable-ramp-delay = <264>;
+            };
+
+            ext_twl_ldo5_ldo_reg: ldo_twl_ldo5 {
+                regulator-name = "twl_ldo5";
+                regulator-min-microvolt = <1200000>;
+                regulator-max-microvolt = <3000000>;
+                regulator-enable-ramp-delay = <264>;
+            };
+
+            ext_twl_buck1_ldo_reg: ldo_twl_buck1 {
+                regulator-name = "twl_buck1";
+                regulator-min-microvolt = <1000000>;
+                regulator-max-microvolt = <1800000>;
+                regulator-enable-ramp-delay = <264>;
+            };
+
+            ext_twl_buck2_ldo_reg: ldo_twl_buck2 {
+                regulator-name = "twl_buck2";
+                regulator-min-microvolt = <1000000>;
+                regulator-max-microvolt = <1800000>;
+                regulator-enable-ramp-delay = <264>;
+            };
+        };
+    };
+};
+
+&pm8998_l14 {
+    qcom,init-mode = <RPMH_REGULATOR_MODE_HPM>;
+};
+
+&pm8998_l20 {
+    qcom,init-mode = <RPMH_REGULATOR_MODE_HPM>;
+};
+
+&pm8998_l21 {
+    regulator-max-microvolt = <3504000>;
+	qcom,init-voltage = <3456000>;
+    status = "disabled";
+};
+
+&pm8998_l22 {
+    qcom,init-voltage = <3312000>;
+    qcom,init-mode = <RPMH_REGULATOR_MODE_HPM>;
+};
+
+&pm8998_l28 {
+    qcom,init-mode = <RPMH_REGULATOR_MODE_HPM>;
+};

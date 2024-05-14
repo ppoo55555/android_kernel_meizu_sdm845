@@ -1,3 +1,10 @@
+ifeq ($(CONFIG_MACH_MEIZU_SDM845),y)
+	dtbo-$(CONFIG_ARCH_SDM845) += \
+		sdm845-v2.1-mtp-overlay-meizu.dtbo
+
+sdm845-v2.1-mtp-overlay-meizu.dtbo-base := sdm845-v2.1-meizu.dtb
+else
+
 dtb-$(CONFIG_ARCH_QCOM)	+= apq8016-sbc.dtb msm8916-mtp.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= msm8996-mtp.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= apq8096-db820c.dtb
@@ -673,6 +680,8 @@ dtb-$(CONFIG_ARCH_SDM429) += sdm429-mtp.dtb \
 endif
 
 dtb-$(CONFIG_ARCH_SDM845_VM) += sdm845-vm.dtb
+
+endif
 
 always		:= $(dtb-y)
 subdir-y	:= $(dts-dirs)
