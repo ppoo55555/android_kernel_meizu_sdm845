@@ -163,7 +163,12 @@ endif
 KBUILD_DTBS	:= dtbs
 
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
-export DTC_FLAGS := -@
+DTC_FLAGS := -@
+ifeq ($(CONFIG_MACH_MEIZU_SDM845),y)
+# For compatibility with Flyme
+DTC_FLAGS += -H both
+endif
+export DTC_FLAGS
 endif
 
 all:	$(KBUILD_IMAGE) $(KBUILD_DTBS)
