@@ -54,6 +54,23 @@
 #define AW869X_SYS_VBAT_MAX                 4500000
 #endif
 
+struct aw869x_effect {
+    uint8_t seq[4];
+    uint8_t loop[2];
+};
+
+enum aw869x_effect_id {
+    AW869X_EFFECT_TICK = 0,
+    AW869X_EFFECT_POP,
+    AW869X_EFFECT_CLICK,
+    AW869X_EFFECT_DOUBLE_CLICK,
+    AW869X_EFFECT_HEAVY_CLICK,
+    AW869X_EFFECT_MBACK_SOFT,
+    AW869X_EFFECT_MBACK_MEDIUM,
+    AW869X_EFFECT_MBACK_HEAVY,
+    AW869X_EFFECT_MAX,
+};
+
 enum aw869x_flags {
     AW869X_FLAG_NONR = 0,
     AW869X_FLAG_SKIP_INTERRUPTS = 1,
@@ -161,6 +178,9 @@ struct aw869x {
 
     struct hrtimer ram_timer;
     struct work_struct ram_work;
+
+    bool timed_work_running;
+    struct work_struct timed_work;
 };
 
 struct aw869x_container{
