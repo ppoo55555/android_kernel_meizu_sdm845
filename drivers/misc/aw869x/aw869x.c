@@ -62,6 +62,12 @@
  * variable
  *
  ******************************************************/
+
+#define HAPTIC_GAIN_EFFECTS 0x20
+#define HAPTIC_GAIN_DEFAULT 0x30
+
+#define HAPTIC_GAIN_MULTIPLIER_DEFAULT 0xff
+
 #define AW869X_RTP_NAME_MAX        64
 static char *aw869x_ram_name = "aw_170hz.bin";
 static char aw869x_rtp_name[][AW869X_RTP_NAME_MAX] = {
@@ -654,12 +660,11 @@ static int aw869x_haptic_set_bst_peak_cur(struct aw869x *aw869x, unsigned char p
 
 static int aw869x_haptic_set_gain(struct aw869x *aw869x, unsigned char gain)
 {
-    if(gain & 0x80) {
+    gain = gain * aw869x->gain / 0xff;
+    if (gain & 0x80)
         gain = 0x7F;
-    }
 
     aw869x_i2c_write(aw869x, AW869X_REG_DATDBG, gain);
-
     return 0;
 }
 
@@ -932,6 +937,7 @@ static void aw869x_timed_work_routine(struct work_struct *work)
     aw869x->timed_work_running = true;
     mutex_lock(&aw869x->lock);
 
+    aw869x_haptic_set_gain(aw869x, HAPTIC_GAIN_DEFAULT);
     aw869x_play_effect_preset(aw869x, &aw869x_effect_default, false);
     msleep(aw869x_en_timeout);
 
@@ -1258,32 +1264,6 @@ static void aw869x_rtp_play(struct aw869x *aw869x, int value)
     aw869x->rtp_init = 1;
 }
 
-static void aw869x_haptic_context(struct aw869x *aw869x, enum aw869x_haptic_mode cmd)
-{
-	int t_top = 0;
-	if (!gpio_is_valid(aw869x->haptic_context_gpio)) {
-		pr_debug("%s haptic context gpio is invalid \n", __func__);
-		return;
-	}
-
-	t_top = gpio_get_value(aw869x->haptic_context_gpio);
-	if (t_top && atomic_read(&aw869x->reduce_pwr)) {
-		switch (cmd) {
-		case HAPTIC_RTP:
-			aw869x->gain = 0x20;
-			break;
-		case HAPTIC_SHORT:
-			aw869x->gain = 0x20;
-			break;
-		case HAPTIC_LONG:
-			aw869x->gain = 0x06;
-			break;
-		default:
-			break;
-		}
-	}
-}
-
 #ifdef TIMED_OUTPUT
 static int aw869x_vibrator_get_time(struct timed_output_dev *dev)
 {
@@ -1559,7 +1539,7 @@ static ssize_t aw869x_gain_show(struct device *dev,
     struct aw869x *aw869x = container_of(cdev, struct aw869x, cdev);
 #endif
 
-    return snprintf(buf, PAGE_SIZE, "%d\n", aw869x->gain_debug);
+    return snprintf(buf, PAGE_SIZE, "%d\n", aw869x->gain);
 }
 
 static ssize_t aw869x_gain_store(struct device *dev,
@@ -1579,16 +1559,14 @@ static ssize_t aw869x_gain_store(struct device *dev,
     if (rc < 0)
         return rc;
 
-    pr_debug("%s: value=%d\n", __FUNCTION__, val);
+    if (val <= 0 || val > 255) {
+        pr_err("%s: Invalid gain\n", __FUNCTION__);
+        return -EINVAL;
+    }
 
-    mutex_lock(&aw869x->lock);
-	if (val > 0)
-		aw869x->debugfs_debug = true;
-	else
-		aw869x->debugfs_debug = false;
-    aw869x->gain_debug = val;
-    aw869x_haptic_set_gain(aw869x, (unsigned char)aw869x->gain_debug);
-    mutex_unlock(&aw869x->lock);
+    pr_debug("%s: value=%d\n", __FUNCTION__, val);
+    aw869x->gain = val;
+
     return count;
 }
 
@@ -2061,38 +2039,6 @@ static ssize_t aw869x_reset_store(struct device *dev,
 }
 #endif
 
-/* Attribute: reduce (RW) */
-static ssize_t aw869x_reduce_store(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t count)
-{
-#ifdef TIMED_OUTPUT
-	struct timed_output_dev *to_dev = dev_get_drvdata(dev);
-	struct aw869x *aw869x = container_of(to_dev, struct aw869x, to_dev);
-#else
-	struct led_classdev *cdev = dev_get_drvdata(dev);
-	struct aw869x *aw869x = container_of(cdev, struct aw869x, cdev);
-#endif
-
-	atomic_set(&aw869x->reduce_pwr, (*buf == '0')?0:1);
-	pr_info("%s: reduce set to %d",
-		__func__, atomic_read(&aw869x->reduce_pwr));
-	return count;
-}
-
-static ssize_t aw869x_reduce_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-#ifdef TIMED_OUTPUT
-	struct timed_output_dev *to_dev = dev_get_drvdata(dev);
-	struct aw869x *aw869x = container_of(to_dev, struct aw869x, to_dev);
-#else
-	struct led_classdev *cdev = dev_get_drvdata(dev);
-	struct aw869x *aw869x = container_of(cdev, struct aw869x, cdev);
-#endif
-	int state = atomic_read(&aw869x->reduce_pwr);
-	return scnprintf(buf, PAGE_SIZE, "%d", state);
-}
-
 static ssize_t aw869x_effect_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -2122,6 +2068,7 @@ static ssize_t aw869x_effect_store(struct device *dev, struct device_attribute *
     }
 
     mutex_lock(&aw869x->lock);
+    aw869x_haptic_set_gain(aw869x, HAPTIC_GAIN_EFFECTS);
     aw869x_play_effect_preset(aw869x, &aw869x_effect_presets[val], true);
     mutex_unlock(&aw869x->lock);
     
@@ -2187,7 +2134,6 @@ static DEVICE_ATTR(voldown_n, S_IWUSR | S_IRUGO, aw869x_voldown_n_show, aw869x_v
 static DEVICE_ATTR(volup_n, S_IWUSR | S_IRUGO, aw869x_volup_n_show, aw869x_volup_n_store);/* Vol up key for trig3_n(0x12) */
 static DEVICE_ATTR(reset, S_IWUSR | S_IRUGO, aw869x_reset_show, aw869x_reset_store);/* Reset device */
 #endif
-static DEVICE_ATTR(reduce, S_IWUSR | S_IRUGO, aw869x_reduce_show, aw869x_reduce_store);
 static DEVICE_ATTR(effect, S_IWUSR | S_IRUGO, aw869x_effect_show, aw869x_effect_store);
 static DEVICE_ATTR(enable, S_IWUSR | S_IRUGO, aw869x_enable_show, aw869x_enable_store);
 
@@ -2261,8 +2207,11 @@ static int aw869x_vibrator_init(struct aw869x *aw869x)
 
     ret = aw869x_i2c_read(aw869x, AW869X_REG_QUE_SEQ1, &reg_val);
     aw869x->index = reg_val & 0x7F;
+#if 0
     ret = aw869x_i2c_read(aw869x, AW869X_REG_DATDBG, &reg_val);
     aw869x->gain = reg_val & 0x7F;
+#endif
+    aw869x->gain = HAPTIC_GAIN_MULTIPLIER_DEFAULT;
     ret = aw869x_i2c_read(aw869x, AW869X_REG_BSTCFG, &reg_val);
     aw869x->vmax = (reg_val >> 3);
     for(i=0; i<AW869X_SEQUENCER_SIZE; i++) {
@@ -2301,17 +2250,6 @@ static int aw869x_vibrator_init(struct aw869x *aw869x)
         dev_err(aw869x->dev, "%s error creating sysfs attr files\n", __func__);
         return ret;
      }
-
-    if (gpio_is_valid(aw869x->haptic_context_gpio)) {
-	/* init reduced force flag to "1" */
-	/* modservice will flip flag if MOD is attached */
-		atomic_set(&aw869x->reduce_pwr, 1);
-		ret = sysfs_create_file(&aw869x->cdev.dev->kobj, &dev_attr_reduce.attr);
-		if (ret < 0) {
-			dev_err(aw869x->dev, "%s error creating sysfs attr reduce files\n", __func__);
-			return ret;
-		}
-    }
 #endif
     hrtimer_init(&aw869x->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     aw869x->timer.function = aw869x_vibrator_timer_func;
@@ -2494,13 +2432,6 @@ static int aw869x_parse_dt(struct device *dev, struct aw869x *aw869x,
         dev_err(dev, "%s: no irq gpio provided.\n", __func__);
     } else {
         dev_info(dev, "%s: irq gpio provided ok.\n", __func__);
-    }
-
-    aw869x->haptic_context_gpio = of_get_named_gpio(np, "haptic-context-gpio", 0);
-    if (aw869x->haptic_context_gpio < 0) {
-        dev_err(dev, "%s: no haptic context gpio provided.\n", __func__);
-    } else {
-        dev_info(dev, "%s: haptic context gpio provided ok.\n", __func__);
     }
 
     return 0;
@@ -2794,10 +2725,6 @@ static int aw869x_i2c_remove(struct i2c_client *i2c)
     pr_info("%s enter\n", __func__);
 
     sysfs_remove_group(&i2c->dev.kobj, &aw869x_attribute_group);
-
-    if (gpio_is_valid(aw869x->haptic_context_gpio)) {
-	sysfs_remove_file(&aw869x->cdev.dev->kobj, &dev_attr_reduce.attr);
-    }
 
     misc_deregister(&aw869x_haptic_misc);
 
