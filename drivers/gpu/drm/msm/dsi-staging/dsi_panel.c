@@ -1751,6 +1751,28 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"ROI not parsed from DTSI, generated dynamically",
 	"qcom,mdss-dsi-timing-switch-command",
 	"qcom,mdss-dsi-post-mode-switch-on-command",
+#ifdef CONFIG_MACH_MEIZU_SDM845
+	"qcom,mdss-dsi-panel-status-command1",
+	"qcom,mdss-dsi-panel-status-command2",
+	"qcom,mdss-dsi-lon-command",
+	"qcom,mdss-dsi-lon-1-command",
+	"qcom,mdss-dsi-lut0-command",
+	"qcom,mdss-dsi-lut1-command",
+	"qcom,mdss-dsi-lut2-command",
+	"qcom,mdss-dsi-lut3-command",
+	"qcom,mdss-dsi-lut0-hbm-command",
+	"qcom,mdss-dsi-lut1-hbm-command",
+	"qcom,mdss-dsi-lut2-hbm-command",
+	"qcom,mdss-dsi-lut3-hbm-command",
+	"qcom,mdss-dsi-doze-mode0-command",
+	"qcom,mdss-dsi-doze-mode1-command",
+	"qcom,mdss-dsi-doze-s2-command",
+	"qcom,mdss-dsi-doze-s2-1-command",
+	"qcom,mdss-dsi-doze-s2-2-command",
+	"qcom,mdss-dsi-sunnyscreen-on-command",
+	"qcom,mdss-dsi-sunnyscreen-off-command",
+	"qcom,mdss-dsi-sunnyscreen-off-sudden-command",
+#endif
 };
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
@@ -1775,6 +1797,28 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"ROI not parsed from DTSI, generated dynamically",
 	"qcom,mdss-dsi-timing-switch-command-state",
 	"qcom,mdss-dsi-post-mode-switch-on-command-state",
+#ifdef CONFIG_MACH_MEIZU_SDM845
+	"qcom,mdss-dsi-panel-status-command-state1",
+	"qcom,mdss-dsi-panel-status-command-state2",
+	"qcom,mdss-dsi-lon-command-state",
+	"qcom,mdss-dsi-lon-1-command-state",
+	"qcom,mdss-dsi-lut0-command-state",
+	"qcom,mdss-dsi-lut1-command-state",
+	"qcom,mdss-dsi-lut2-command-state",
+	"qcom,mdss-dsi-lut3-command-state",
+	"qcom,mdss-dsi-lut0-hbm-command-state",
+	"qcom,mdss-dsi-lut1-hbm-command-state",
+	"qcom,mdss-dsi-lut2-hbm-command-state",
+	"qcom,mdss-dsi-lut3-hbm-command-state",
+	"qcom,mdss-dsi-doze-mode0-command-state",
+	"qcom,mdss-dsi-doze-mode1-command-state",
+	"qcom,mdss-dsi-doze-s2-command-state",
+	"qcom,mdss-dsi-doze-s2-1-command-state",
+	"qcom,mdss-dsi-doze-s2-2-command-state",
+	"qcom,mdss-dsi-sunnyscreen-on-command-state",
+	"qcom,mdss-dsi-sunnyscreen-off-command-state",
+	"qcom,mdss-dsi-sunnyscreen-off-sudden-command-state",
+#endif
 };
 
 static int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt)
@@ -3000,6 +3044,7 @@ static int dsi_panel_parse_dms_info(struct dsi_panel *panel,
  * The length of all the valid values to be checked should not be greater
  * than the length of returned data from read command.
  */
+#ifndef CONFIG_MACH_MEIZU_SDM845
 static bool
 dsi_panel_parse_esd_check_valid_params(struct dsi_panel *panel, u32 count)
 {
@@ -3016,6 +3061,7 @@ dsi_panel_parse_esd_check_valid_params(struct dsi_panel *panel, u32 count)
 
 	return true;
 }
+#endif
 
 static bool dsi_panel_parse_esd_status_len(struct device_node *np,
 	char *prop_key, u32 **target, u32 cmd_cnt)
@@ -3050,14 +3096,27 @@ static bool dsi_panel_parse_esd_status_len(struct device_node *np,
 
 static void dsi_panel_esd_config_deinit(struct drm_panel_esd_config *esd_config)
 {
+#ifndef CONFIG_MACH_MEIZU_SDM845
 	kfree(esd_config->status_buf);
 	kfree(esd_config->return_buf);
 	kfree(esd_config->status_value);
 	kfree(esd_config->status_valid_params);
 	kfree(esd_config->status_cmds_rlen);
 	kfree(esd_config->status_cmd.cmds);
+#else
+	int i;
+
+	kfree(esd_config->status_buf);
+	for (i = 0; i < 3; i++) {
+		kfree(esd_config->return_buf[i]);
+		kfree(esd_config->status_value[i]);
+		kfree(esd_config->status_cmds_rlen[i]);
+		kfree(esd_config->status_cmd[i].cmds);
+	}
+#endif
 }
 
+#ifndef CONFIG_MACH_MEIZU_SDM845
 int dsi_panel_parse_esd_reg_read_configs(struct dsi_panel *panel,
 				struct device_node *of_node)
 {
@@ -3180,6 +3239,206 @@ error1:
 error:
 	return rc;
 }
+#else
+int dsi_panel_parse_esd_reg_read_configs(struct dsi_panel *panel,
+				struct device_node *of_node)
+{
+	struct drm_panel_esd_config *esd_config;
+	int rc = 0;
+	u32 tmp;
+	u32 i, status_len, *lenp;
+	struct property *data;
+
+	if (!panel || !of_node) {
+		pr_err("Invalid Params\n");
+		return -EINVAL;
+	}
+
+	esd_config = &panel->esd_config;
+	if (!esd_config)
+		return -EINVAL;
+
+	dsi_panel_parse_cmd_sets_sub(&esd_config->status_cmd[0],
+				DSI_CMD_SET_PANEL_STATUS, of_node);
+	if (!esd_config->status_cmd[0].count) {
+		pr_err("panel status command parsing failed\n");
+		rc = -EINVAL;
+		goto error;
+	}
+
+	dsi_panel_parse_cmd_sets_sub(&esd_config->status_cmd[1],
+				DSI_CMD_SET_PANEL_STATUS_1, of_node);
+	if (!esd_config->status_cmd[1].count) {
+		pr_err("panel status 1 command parsing failed\n");
+		rc = -EINVAL;
+		goto error;
+	}
+
+	dsi_panel_parse_cmd_sets_sub(&esd_config->status_cmd[2],
+				DSI_CMD_SET_PANEL_STATUS_2, of_node);
+	if (!esd_config->status_cmd[2].count) {
+		pr_err("panel status 2 command parsing failed\n");
+		rc = -EINVAL;
+		goto error;
+	}
+
+	if (!dsi_panel_parse_esd_status_len(of_node,
+		"qcom,mdss-dsi-panel-status-read-length",
+			&panel->esd_config.status_cmds_rlen[0],
+				esd_config->status_cmd[0].count)) {
+		pr_err("Invalid status read length\n");
+		rc = -EINVAL;
+		goto error1;
+	}
+
+	if (!dsi_panel_parse_esd_status_len(of_node,
+		"qcom,mdss-dsi-panel-status-read-length1",
+			&panel->esd_config.status_cmds_rlen[1],
+				esd_config->status_cmd[1].count)) {
+		pr_err("Invalid status 1 read length\n");
+		rc = -EINVAL;
+		goto error1;
+	}
+
+	if (!dsi_panel_parse_esd_status_len(of_node,
+		"qcom,mdss-dsi-panel-status-read-length2",
+			&panel->esd_config.status_cmds_rlen[2],
+				esd_config->status_cmd[2].count)) {
+		pr_err("Invalid status 2 read length\n");
+		rc = -EINVAL;
+		goto error1;
+	}
+
+	status_len = 0;
+	lenp = esd_config->status_cmds_rlen[0];
+	for (i = 0; i < esd_config->status_cmd[0].count; ++i)
+		status_len += lenp[i];
+
+	if (!status_len) {
+		rc = -EINVAL;
+		goto error2;
+	}
+
+	/*
+	 * Some panel may need multiple read commands to properly
+	 * check panel status. Do a sanity check for proper status
+	 * value which will be compared with the value read by dsi
+	 * controller during ESD check. Also check if multiple read
+	 * commands are there then, there should be corresponding
+	 * status check values for each read command.
+	 */
+	data = of_find_property(of_node,
+			"qcom,mdss-dsi-panel-status-value", &tmp);
+	tmp /= sizeof(u32);
+	if (!IS_ERR_OR_NULL(data) && tmp != 0 && (tmp % status_len) == 0) {
+		esd_config->groups[0] = tmp / status_len;
+	} else {
+		pr_err("error parse panel-status-value\n");
+		rc = -EINVAL;
+		goto error2;
+	}
+
+	data = of_find_property(of_node,
+			"qcom,mdss-dsi-panel-status-value1", &tmp);
+	tmp /= sizeof(u32);
+	if (!IS_ERR_OR_NULL(data) && tmp != 0 && (tmp % status_len) == 0) {
+		esd_config->groups[1] = tmp / status_len;
+	} else {
+		pr_err("error parse panel-status-value1\n");
+		rc = -EINVAL;
+		goto error2;
+	}
+
+	data = of_find_property(of_node,
+			"qcom,mdss-dsi-panel-status-value2", &tmp);
+	tmp /= sizeof(u32);
+	if (!IS_ERR_OR_NULL(data) && tmp != 0 && (tmp % status_len) == 0) {
+		esd_config->groups[2] = tmp / status_len;
+	} else {
+		pr_err("error parse panel-status-value2\n");
+		rc = -EINVAL;
+		goto error2;
+	}
+
+	for (i = 0; i < 3; i++) {
+		esd_config->status_value[i] =
+			kzalloc(sizeof(u32) * status_len * esd_config->groups[i],
+				GFP_KERNEL);
+		if (!esd_config->status_value[i]) {
+			rc = -ENOMEM;
+			goto error2;
+		}
+	}
+
+	for (i = 0; i < 3; i++) {
+		esd_config->return_buf[i] =
+			kzalloc(sizeof(u32) * status_len * esd_config->groups[i],
+				GFP_KERNEL);
+		if (!esd_config->return_buf[i]) {
+			rc = -ENOMEM;
+			goto error2;
+		}
+	}
+
+	esd_config->status_buf = kzalloc(SZ_4K, GFP_KERNEL);
+	if (!esd_config->status_buf) {
+		rc = -ENOMEM;
+		goto error3;
+	}
+
+	rc = of_property_read_u32_array(of_node,
+		"qcom,mdss-dsi-panel-status-value",
+		esd_config->status_value[0], esd_config->groups[0] * status_len);
+	if (rc) {
+		pr_debug("error reading panel status values\n");
+		memset(esd_config->status_value[0], 0,
+				esd_config->groups[0] * status_len);
+	}
+
+	rc = of_property_read_u32_array(of_node,
+		"qcom,mdss-dsi-panel-status-value1",
+		esd_config->status_value[1], esd_config->groups[1] * status_len);
+	if (rc) {
+		pr_debug("error reading panel status1 values\n");
+		memset(esd_config->status_value[1], 0,
+				esd_config->groups[1] * status_len);
+	}
+
+	rc = of_property_read_u32_array(of_node,
+		"qcom,mdss-dsi-panel-status-value2",
+		esd_config->status_value[2], esd_config->groups[2] * status_len);
+	if (rc) {
+		pr_debug("error reading panel status2 values\n");
+		memset(esd_config->status_value[2], 0,
+				esd_config->groups[2] * status_len);
+	}
+
+	rc = of_property_read_u32(of_node,
+		"qcom,mdss-dsi-panel-max-error-count",
+		&esd_config->max_error_count);
+	if (rc) {
+		pr_err("error reading panel max error count\n");
+		esd_config->max_error_count = 5;
+	}
+
+	esd_config->cmd_channel = of_property_read_bool(of_node,
+		"qcom,mdss-dsi-panel-cmds-only-by-right");
+
+	return 0;
+
+error3:
+	for (i = 0; i < 3; i++)
+		kfree(esd_config->return_buf[i]);
+error2:
+	for (i = 0; i < 3; i++)
+		kfree(esd_config->status_cmds_rlen[i]);
+error1:
+	for (i = 0; i < 3; i++)
+		kfree(esd_config->status_cmd[i].cmds);
+error:
+	return rc;
+}
+#endif
 
 static int dsi_panel_parse_esd_config(struct dsi_panel *panel,
 				     struct device_node *of_node)
@@ -4197,4 +4456,38 @@ int dsi_panel_post_unprepare(struct dsi_panel *panel)
 error:
 	mutex_unlock(&panel->panel_lock);
 	return rc;
+}
+
+int dsi_panel_set_hbm(struct dsi_panel *panel, bool mode) {
+	int rc = 0;
+	uint8_t payload[1];
+
+	if (!panel) {
+		pr_err("invalid params\n");
+		return -EINVAL;
+	}
+
+	if (panel->type == EXT_BRIDGE)
+		return 0;
+
+	dsi_panel_acquire_panel_lock(panel);
+
+	if (mode)
+		payload[0] = 0xE8;
+	else
+		payload[0] = 0x28;
+
+	// Update HBM state
+	mipi_dsi_dcs_write(&panel->mipi_device,
+		MIPI_DCS_WRITE_CONTROL_DISPLAY,
+		payload, 1);
+
+	// After HBM being reset, panel needs to know what the brightness
+	// level was before. Inform panel about it.
+	dsi_panel_set_backlight(panel, panel->bl_config.bl_scaled);
+
+	panel->hbm = mode;
+
+	dsi_panel_release_panel_lock(panel);
+	return 0;
 }

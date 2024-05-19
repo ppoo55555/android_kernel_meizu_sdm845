@@ -170,6 +170,16 @@ int dsi_display_set_backlight(void *display, u32 bl_lvl)
 	pr_debug("bl_scale = %u, bl_scale_ad = %u, bl_lvl = %u\n",
 		bl_scale, bl_scale_ad, (u32)bl_temp);
 
+#ifdef CONFIG_MACH_MEIZU_SDM845
+	panel->bl_config.bl_scaled = bl_temp;
+	
+	// Skip real-time backlight level changes in HBM mode.
+	if (panel->hbm) {
+		rc = 0;
+		goto error;
+	}
+#endif
+
 	rc = dsi_display_clk_ctrl(dsi_display->dsi_clk_handle,
 			DSI_CORE_CLK, DSI_CLK_ON);
 	if (rc) {
@@ -508,6 +518,7 @@ error:
 	return rc;
 }
 
+#ifndef CONFIG_MACH_MEIZU_SDM845
 static bool dsi_display_validate_reg_read(struct dsi_panel *panel)
 {
 	int i, j = 0;
@@ -543,6 +554,49 @@ static bool dsi_display_validate_reg_read(struct dsi_panel *panel)
 
 	return false;
 }
+#else
+static bool dsi_display_validate_reg_read(struct dsi_panel *panel)
+{
+	int a, i, j = 0;
+	int len = 0, *lenp;
+	int group = 0, count = 0;
+	struct drm_panel_esd_config *config;
+	int successes = 0;
+
+	if (!panel)
+		return false;
+
+	config = &(panel->esd_config);
+	for (a = 0; a < 3; a++) {
+		lenp = config->status_cmds_rlen[a];
+		count = config->status_cmd[a].count;
+		j = 0;
+		group = 0;
+
+		for (i = 0; i < count; i++)
+			len += lenp[i];
+
+		for (i = 0; i < len; i++)
+			j += len;
+
+		for (j = 0; j < config->groups; ++j) {
+			for (i = 0; i < len; ++i) {
+				if (config->return_buf[a][i] !=
+					config->status_value[a][group + i])
+					break;
+			}
+
+			if (i == len) {
+				successes++;
+				break;
+			}
+			group += len;
+		}
+	}
+
+	return successes == 3;
+}
+#endif
 
 static void dsi_display_parse_te_gpio(struct dsi_display *display)
 {
@@ -568,7 +622,7 @@ static void dsi_display_parse_te_gpio(struct dsi_display *display)
 static int dsi_display_read_status(struct dsi_display_ctrl *ctrl,
 		struct dsi_panel *panel)
 {
-	int i, rc = 0, count = 0, start = 0, *lenp;
+	int a, i, rc = 0, count = 0, start = 0, *lenp;
 	struct drm_panel_esd_config *config;
 	struct dsi_cmd_desc *cmds;
 	u32 flags = 0;
@@ -585,31 +639,34 @@ static int dsi_display_read_status(struct dsi_display_ctrl *ctrl,
 		return 1;
 
 	config = &(panel->esd_config);
-	lenp = config->status_valid_params ?: config->status_cmds_rlen;
-	count = config->status_cmd.count;
-	cmds = config->status_cmd.cmds;
-	flags |= (DSI_CTRL_CMD_FETCH_MEMORY | DSI_CTRL_CMD_READ |
-		  DSI_CTRL_CMD_CUSTOM_DMA_SCHED);
+	for (a = 0; a < 3; a++) {
+		start = 0;
+		lenp = config->status_cmds_rlen[a];
+		count = config->status_cmd[a].count;
+		cmds = config->status_cmd[a].cmds;
+		flags |= (DSI_CTRL_CMD_FETCH_MEMORY | DSI_CTRL_CMD_READ |
+			DSI_CTRL_CMD_CUSTOM_DMA_SCHED);
 
-	for (i = 0; i < count; ++i) {
-		memset(config->status_buf, 0x0, SZ_4K);
-		if (config->status_cmd.state == DSI_CMD_SET_STATE_LP)
-			cmds[i].msg.flags |= MIPI_DSI_MSG_USE_LPM;
-		if (cmds[i].last_command) {
-			cmds[i].msg.flags |= MIPI_DSI_MSG_LASTCOMMAND;
-			flags |= DSI_CTRL_CMD_LAST_COMMAND;
-		}
-		cmds[i].msg.rx_buf = config->status_buf;
-		cmds[i].msg.rx_len = config->status_cmds_rlen[i];
-		rc = dsi_ctrl_cmd_transfer(ctrl->ctrl, &cmds[i].msg, flags);
-		if (rc <= 0) {
-			pr_err("rx cmd transfer failed rc=%d\n", rc);
-			return rc;
-		}
+		for (i = 0; i < count; ++i) {
+			memset(config->status_buf, 0x0, SZ_4K);
+			if (config->status_cmd[a].state == DSI_CMD_SET_STATE_LP)
+				cmds[i].msg.flags |= MIPI_DSI_MSG_USE_LPM;
+			if (cmds[i].last_command) {
+				cmds[i].msg.flags |= MIPI_DSI_MSG_LASTCOMMAND;
+				flags |= DSI_CTRL_CMD_LAST_COMMAND;
+			}
+			cmds[i].msg.rx_buf = config->status_buf;
+			cmds[i].msg.rx_len = lenp[i];
+			rc = dsi_ctrl_cmd_transfer(ctrl->ctrl, &cmds[i].msg, flags);
+			if (rc <= 0) {
+				pr_err("rx cmd transfer failed rc=%d\n", rc);
+				return rc;
+			}
 
-		memcpy(config->return_buf + start,
-			config->status_buf, lenp[i]);
-		start += lenp[i];
+			memcpy(config->return_buf[a] + start,
+				config->status_buf, lenp[i]);
+			start += lenp[i];
+		}
 	}
 
 	return rc;
@@ -776,7 +833,7 @@ int dsi_display_check_status(void *display, bool te_check_override)
 	u32 mask;
 
 	if (!dsi_display || !dsi_display->panel)
-		return -EINVAL;
+		return -EINVAL;	
 
 	panel = dsi_display->panel;
 
@@ -788,6 +845,18 @@ int dsi_display_check_status(void *display, bool te_check_override)
 		return rc;
 	}
 	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY);
+
+	if (panel->esd_config.error_count > panel->esd_config.max_error_count) {
+		pr_err("Too many ESD errors!\n");
+		panel->esd_config.esd_enabled = false;
+		return 0;
+	}
+
+	if (!panel->esd_config.esd_enabled) {
+		pr_err("ESD is turned off\n");
+		panel->esd_config.error_count++;
+		return -EINVAL;
+	}
 
 	/* Prevent another ESD check,when ESD recovery is underway */
 	if (atomic_read(&panel->esd_recovery_pending)) {
@@ -824,9 +893,11 @@ int dsi_display_check_status(void *display, bool te_check_override)
 		dsi_display_set_ctrl_esd_check_flag(dsi_display, false);
 		dsi_display_mask_ctrl_error_interrupts(dsi_display, mask,
 							false);
+		panel->esd_config.error_count = 0;
 	} else {
 		/* Handle Panel failures during display disable sequence */
 		atomic_set(&panel->esd_recovery_pending, 1);
+		panel->esd_config.error_count++;
 	}
 
 	dsi_display_clk_ctrl(dsi_display->dsi_clk_handle,
@@ -4736,6 +4807,69 @@ static struct attribute_group dynamic_dsi_clock_fs_attrs_group = {
 	.attrs = dynamic_dsi_clock_fs_attrs,
 };
 
+static ssize_t dsi_display_hbm_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_display *display;
+	unsigned int mode;
+
+	display = dev_get_drvdata(dev);
+	if (!display) {
+		pr_err("Invalid display\n");
+		return -EINVAL;
+	}
+
+	if (display->panel->type == EXT_BRIDGE)
+		return snprintf(buf, PAGE_SIZE, "0\n");
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", dsi_panel_hbm(display->panel));
+}
+
+static ssize_t dsi_display_hbm_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct dsi_display *display;
+	unsigned int mode;
+	int rc;
+
+	display = dev_get_drvdata(dev);
+	if (!display) {
+		pr_err("%s: Invalid display\n", __func__);
+		return -EINVAL;
+	}
+
+	rc = kstrtouint(buf, 0, &mode);
+	if (rc < 0) {
+		pr_err("%s: kstrtouint failed. rc=%d\n", __func__, rc);
+		return rc;
+	}
+
+	if (mode > 1) {
+		pr_err("%s: invalid HBM\n", __func__);
+		return rc;
+	}
+
+	rc = dsi_panel_set_hbm(display->panel, mode);
+	if (rc < 0) {
+		pr_err("%s: failed to set HBM. rc=%d\n", __func__, rc);
+		return rc;
+	}
+
+	return count;
+}
+
+static DEVICE_ATTR(hbm, 0644,
+			dsi_display_hbm_show,
+			dsi_display_hbm_store);
+
+static struct attribute *vendor_features_fs_attrs[] = {
+	&dev_attr_hbm.attr,
+	NULL,
+};
+static struct attribute_group vendor_features_fs_attrs_group = {
+	.attrs = vendor_features_fs_attrs,
+};
+
 static int dsi_display_sysfs_init(struct dsi_display *display)
 {
 	int rc = 0;
@@ -4744,6 +4878,11 @@ static int dsi_display_sysfs_init(struct dsi_display *display)
 	if (display->panel->panel_mode == DSI_OP_CMD_MODE)
 		rc = sysfs_create_group(&dev->kobj,
 			&dynamic_dsi_clock_fs_attrs_group);
+
+#ifdef CONFIG_MACH_MEIZU_SDM845
+	rc = sysfs_create_group(&dev->kobj,
+			&vendor_features_fs_attrs_group);
+#endif
 	pr_debug("[%s] dsi_display_sysfs_init:%d,panel mode:%d\n",
 		display->name, rc, display->panel->panel_mode);
 	return rc;
@@ -4757,6 +4896,11 @@ static int dsi_display_sysfs_deinit(struct dsi_display *display)
 	if (display->panel->panel_mode == DSI_OP_CMD_MODE)
 		sysfs_remove_group(&dev->kobj,
 			&dynamic_dsi_clock_fs_attrs_group);
+
+#ifdef CONFIG_MACH_MEIZU_SDM845
+	sysfs_remove_group(&dev->kobj,
+		&vendor_features_fs_attrs_group);
+#endif
 
 	return 0;
 

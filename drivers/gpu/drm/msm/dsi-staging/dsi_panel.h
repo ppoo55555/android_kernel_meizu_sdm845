@@ -107,6 +107,10 @@ struct dsi_backlight_config {
 	u32 bl_scale;
 	u32 bl_scale_ad;
 
+#ifdef CONFIG_MACH_MEIZU_SDM845
+	u32 bl_scaled;
+#endif
+
 	int en_gpio;
 	/* PWM params */
 	bool pwm_pmi_control;
@@ -149,13 +153,23 @@ struct drm_panel_esd_config {
 	bool cmd_channel;
 
 	enum esd_check_status_mode status_mode;
+	u8 *status_buf;
+	u32 *status_valid_params;
+#ifndef CONFIG_MACH_MEIZU_SDM845
 	struct dsi_panel_cmd_set status_cmd;
 	u32 *status_cmds_rlen;
-	u32 *status_valid_params;
 	u32 *status_value;
 	u8 *return_buf;
-	u8 *status_buf;
 	u32 groups;
+#else
+	int error_count;
+	int max_error_count;
+	struct dsi_panel_cmd_set status_cmd[3];
+	u32 *status_cmds_rlen[3];
+	u32 *status_value[3];
+	u8 *return_buf[3];
+	u32 groups[3];
+#endif
 };
 
 enum dsi_panel_type {
@@ -223,14 +237,7 @@ struct dsi_panel {
 
 	bool sync_broadcast_en;
 
-#ifdef CONFIG_MACH_MEIZU_SDM845
-	int hbm_mode;
-	int hbm_state;
-	int s2_hbm_state;
-	int lut;
-	int aod;
-	int doze_mode;
-#endif
+	bool hbm;
 
 	struct dsi_panel_exd_config exd_config;
 };
@@ -253,6 +260,15 @@ static inline void dsi_panel_acquire_panel_lock(struct dsi_panel *panel)
 static inline void dsi_panel_release_panel_lock(struct dsi_panel *panel)
 {
 	mutex_unlock(&panel->panel_lock);
+}
+
+static inline bool dsi_panel_hbm(struct dsi_panel *panel)
+{
+	bool hbm;
+	dsi_panel_acquire_panel_lock(panel);
+	hbm = panel->hbm;
+	dsi_panel_release_panel_lock(panel);
+	return hbm;
 }
 
 struct dsi_panel *dsi_panel_get(struct device *parent,
@@ -333,5 +349,7 @@ int dsi_panel_parse_esd_reg_read_configs(struct dsi_panel *panel,
 				struct device_node *of_node);
 
 void dsi_panel_ext_bridge_put(struct dsi_panel *panel);
+
+int dsi_panel_set_hbm(struct dsi_panel *panel, bool mode);
 
 #endif /* _DSI_PANEL_H_ */
