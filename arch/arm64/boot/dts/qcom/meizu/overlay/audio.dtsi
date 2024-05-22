@@ -74,8 +74,8 @@
 		interrupt-parent = <&tlmm>;
 		interrupts = <11 0x8>;
 
-		cirrus,advisory-channel = <9>;
-		cirrus,audio-channel = <9>;
+		cirrus,dsp1-rx1-source = <9>; // CS35L41_INPUT_SRC_ASPRX2
+		cirrus,dsp1-rx2-source = <9>; // CS35L41_INPUT_SRC_ASPRX2
 		cirrus,boost-cap-microfarad = <15>;
 		cirrus,boost-ind-nanohenry = <1000>;
 		cirrus,boost-peak-milliamp = <3500>;
@@ -100,8 +100,8 @@
 		interrupt-parent = <&tlmm>;
 		interrupts = <30 0x8>;
 
-		cirrus,advisory-channel = <8>;
-		cirrus,audio-channel = <8>;
+		cirrus,dsp1-rx1-source = <8>; // CS35L41_INPUT_SRC_ASPRX1
+		cirrus,dsp1-rx2-source = <8>; // CS35L41_INPUT_SRC_ASPRX1
 		cirrus,boost-cap-microfarad = <15>;
 		cirrus,boost-ind-nanohenry = <1000>;
 		cirrus,boost-peak-milliamp = <3500>;
