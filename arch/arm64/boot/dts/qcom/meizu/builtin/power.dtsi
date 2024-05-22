@@ -44,66 +44,95 @@
 &qupv3_se14_i2c {
     status = "ok";
 
-    cam_pmic1@50 {
-        compatible = "meizu,ext_twl80125";
+    twl80125@50 {
+        compatible = "ti,twl80125";
         reg = <0x50>;
-        gpios = <&tlmm 21 0x00>;
-        cam_pmic_io-supply = <&pm8998_s4>;
-        regulator-names = "cam_pmic_io";
+
+        twl,enable-gpio = <&tlmm 21 0x0>;
+
+        regulator-names = "vddio";
         rgltr-cntrl-support;
         rgltr-min-voltage = <1800000>;
         rgltr-max-voltage = <1800000>;
         rgltr-load-current = <100000>;
 
-        ldo_regulators {
-            ext_twl_ldo1_ldo_reg: ldo_twl_ldo1 {
-                regulator-name = "twl_ldo1";
-                regulator-min-microvolt = <1200000>;
-                regulator-max-microvolt = <3000000>;
-                regulator-enable-ramp-delay = <264>;
-            };
+        vddio-supply = <&pm8998_s4>;
 
-            ext_twl_ldo2_ldo_reg: ldo_twl_ldo2 {
-                regulator-name = "twl_ldo2";
-                regulator-min-microvolt = <1200000>;
-                regulator-max-microvolt = <3000000>;
-                regulator-enable-ramp-delay = <264>;
-            };
+        ext_twl_buck1_ldo_reg: regulator-buck1 {
+            regulator-name = "twl80125_buck1";
+            regulator-min-microvolt = <1000000>;
+            regulator-max-microvolt = <1800000>;
+            regulator-enable-ramp-delay = <264>;
 
-            ext_twl_ldo3_ldo_reg: ldo_twl_ldo3 {
-                regulator-name = "twl_ldo3";
-                regulator-min-microvolt = <1200000>;
-                regulator-max-microvolt = <3000000>;
-                regulator-enable-ramp-delay = <264>;
-            };
+            twl,enable-bit = <0>;
+            twl,regulator-type = <0>;
+            twl,voltage-control-addr = <0x02>;
+        };
 
-            ext_twl_ldo4_ldo_reg: ldo_twl_ldo4 {
-                regulator-name = "twl_ldo4";
-                regulator-min-microvolt = <1200000>;
-                regulator-max-microvolt = <3000000>;
-                regulator-enable-ramp-delay = <264>;
-            };
+        ext_twl_buck2_ldo_reg: regulator-buck2 {
+            regulator-name = "twl80125_buck2";
+            regulator-min-microvolt = <1000000>;
+            regulator-max-microvolt = <1800000>;
+            regulator-enable-ramp-delay = <264>;    
 
-            ext_twl_ldo5_ldo_reg: ldo_twl_ldo5 {
-                regulator-name = "twl_ldo5";
-                regulator-min-microvolt = <1200000>;
-                regulator-max-microvolt = <3000000>;
-                regulator-enable-ramp-delay = <264>;
-            };
+            twl,enable-bit = <1>;
+            twl,regulator-type = <0>;
+            twl,voltage-control-addr = <0x03>;
+        };
 
-            ext_twl_buck1_ldo_reg: ldo_twl_buck1 {
-                regulator-name = "twl_buck1";
-                regulator-min-microvolt = <1000000>;
-                regulator-max-microvolt = <1800000>;
-                regulator-enable-ramp-delay = <264>;
-            };
+        ext_twl_ldo1_ldo_reg: regulator-ldo1 {
+            regulator-name = "twl80125_ldo1";
+            regulator-min-microvolt = <1200000>;
+            regulator-max-microvolt = <3000000>;
+            regulator-enable-ramp-delay = <264>;
 
-            ext_twl_buck2_ldo_reg: ldo_twl_buck2 {
-                regulator-name = "twl_buck2";
-                regulator-min-microvolt = <1000000>;
-                regulator-max-microvolt = <1800000>;
-                regulator-enable-ramp-delay = <264>;
-            };
+            twl,enable-bit = <2>;
+            twl,regulator-type = <1>;
+            twl,voltage-control-addr = <0x05>;
+        };
+
+        ext_twl_ldo2_ldo_reg: regulator-ldo2 {
+            regulator-name = "twl80125_ldo2";
+            regulator-min-microvolt = <1200000>;
+            regulator-max-microvolt = <3000000>;
+            regulator-enable-ramp-delay = <264>;
+
+            twl,enable-bit = <3>;
+            twl,regulator-type = <1>;
+            twl,voltage-control-addr = <0x06>;
+        };
+
+        ext_twl_ldo3_ldo_reg: regulator-ldo3 {
+            regulator-name = "twl80125_ldo3";
+            regulator-min-microvolt = <1200000>;
+            regulator-max-microvolt = <3000000>;
+            regulator-enable-ramp-delay = <264>;
+            
+            twl,enable-bit = <4>;
+            twl,regulator-type = <1>;
+            twl,voltage-control-addr = <0x07>;
+        };
+
+        ext_twl_ldo4_ldo_reg: regulator-ldo4 {
+            regulator-name = "twl80125_ldo4";
+            regulator-min-microvolt = <1200000>;
+            regulator-max-microvolt = <3000000>;
+            regulator-enable-ramp-delay = <264>;
+
+            twl,enable-bit = <5>;
+            twl,regulator-type = <1>;
+            twl,voltage-control-addr = <0x08>;
+        };
+
+        ext_twl_ldo5_ldo_reg: regulator-ldo5 {
+            regulator-name = "twl80125_ldo5";
+            regulator-min-microvolt = <1200000>;
+            regulator-max-microvolt = <3000000>;
+            regulator-enable-ramp-delay = <264>;
+
+            twl,enable-bit = <6>;
+            twl,regulator-type = <1>;
+            twl,voltage-control-addr = <0x09>;
         };
     };
 };
