@@ -31,6 +31,7 @@
 #include <linux/power_supply.h>
 #include "aw869x.h"
 #include "aw869x_reg.h"
+#include <linux/meizu.h>
 
 /******************************************************
  *
@@ -68,9 +69,9 @@
 
 #define HAPTIC_GAIN_MULTIPLIER_DEFAULT 0xff
 
-#define AW869X_RTP_NAME_MAX        64
-static char *aw869x_ram_name = "aw_170hz.bin";
-static char aw869x_rtp_name[][AW869X_RTP_NAME_MAX] = {
+#define AW869X_FW_NAME_MAX        64
+static char aw869x_ram_name[AW869X_FW_NAME_MAX] = "aw_170hz.bin";
+static char aw869x_rtp_name[][AW869X_FW_NAME_MAX] = {
     {"sim_ring01.bin"},
     {"sim_ring02.bin"},
     {"sim_ring03.bin"},
@@ -459,6 +460,42 @@ static void aw869x_ram_work_routine(struct work_struct *work)
 
 }
 #endif
+
+static int aw869x_calibration_init(struct aw869x *aw869x)
+{
+    char cal[32];
+    int freq_base = 170, freq_frac = 0;
+    long int calibration_date = 0;
+    int ret;
+
+    ret = mz_private_read(cal, 32, 0x12000);
+    if (ret < 0) {
+        pr_err("%s: calibration reading failed: %d", __func__, ret);
+        goto out;
+    }
+    // failsafe
+    cal[31] = '\0';
+
+    ret = sscanf(cal, "aw-%d.%d-%ld", &freq_base, &freq_frac, &calibration_date);
+    if (ret < 3) {
+        pr_err("%s: calibration parsing failed (%s)", __func__, cal);
+        goto out;
+    }
+
+    if (freq_frac > 4)
+        freq_base++;
+
+    if (freq_base > 175)
+        freq_base = 175;
+    else if (freq_base < 165)
+        freq_base = 165;
+
+out:
+    snprintf(aw869x_ram_name, AW869X_FW_NAME_MAX, "aw_%dhz.bin", freq_base);
+    pr_info("%s: motor frequency: %d.%d Hz, calibrated on %ld, firmware: %s",
+        __func__, freq_base, freq_frac, calibration_date, aw869x_ram_name);
+    return 0;
+}
 
 static int aw869x_ram_init(struct aw869x *aw869x)
 {
@@ -2704,6 +2741,7 @@ static int aw869x_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *
 
     aw869x_vibrator_init(aw869x);
     aw869x_haptic_init(aw869x);
+    aw869x_calibration_init(aw869x);
     aw869x_ram_init(aw869x);
 
     pr_info("%s probe completed successfully!\n", __func__);
@@ -2775,7 +2813,7 @@ static int __init aw869x_i2c_init(void)
 
     return 0;
 }
-module_init(aw869x_i2c_init);
+late_initcall(aw869x_i2c_init);
 
 
 static void __exit aw869x_i2c_exit(void)
