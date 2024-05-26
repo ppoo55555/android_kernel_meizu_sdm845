@@ -11,146 +11,19 @@
  * GNU General Public License for more details.
  */
 
-#include <dt-bindings/clock/mdss-10nm-pll-clk.h>
+/ {
+    aliases {
+        spi1 = &qupv3_se0_spi;
+		spi2 = &qupv3_se7_spi;
+    };
+};
 
-&firmware {
-    android {
-        compatible = "android,firmware";
-        vbmeta {
-            compatible = "android,vbmeta";
-            parts = "vbmeta,boot,system,vendor,dtbo,recovery";
+&spmi_bus {
+	qcom,pm8005@4 {
+        qcom,power-on@800 {
+            compatible = "qcom,qpnp-power-on";
+            reg = <0x800 0x100>;
         };
-
-        fstab {
-            compatible = "android,fstab";
-            system {
-                compatible = "android,system";
-                dev = "/dev/block/platform/soc/1d84000.ufshc/by-name/system";
-                fsmgr_flags = "wait,avb";
-                mnt_flags = "ro,barrier=1,discard";
-                type = "ext4";
-            };
-
-            vendor {
-                fsmgr_flags = "wait,avb";
-                /delete-property/ status;
-            };
-        };
-    };
-};
-
-&soc {
-    qcom,msm-imem@146bf000 {
-        reduced_sdi_mode@6dc {
-            compatible = "qcom,msm-imem-reduced_sdi_mode";
-            reg = <0x6dc 0x04>;
-        };
-    };
-};
-
-&removed_region {
-    reg = <0 0x85fc0000 0 0x4b40000>;
-};
-
-&mdss_mdp {
-    clocks =
-			<&clock_gcc GCC_DISP_AHB_CLK>,
-			<&clock_gcc GCC_DISP_AXI_CLK>,
-			<&clock_dispcc DISP_CC_MDSS_AHB_CLK>,
-			<&clock_dispcc DISP_CC_MDSS_AXI_CLK>,
-			<&clock_dispcc DISP_CC_MDSS_MDP_CLK>,
-			<&clock_dispcc DISP_CC_MDSS_VSYNC_CLK>;
-
-    clocks =
-			<&clock_gcc GCC_DISP_AHB_CLK>,
-			<&clock_gcc GCC_DISP_AXI_CLK>,
-			<&clock_dispcc DISP_CC_MDSS_AHB_CLK>,
-			<&clock_dispcc DISP_CC_MDSS_AXI_CLK>,
-			<&clock_dispcc DISP_CC_MDSS_MDP_CLK>,
-			<&clock_dispcc DISP_CC_MDSS_VSYNC_CLK>;
-
-            clocks = <0x22 0x15
-                      0x22 0x16
-                      0x20 0x00
-                      0x20 0x01
-                      0x20 0x17
-                      0x20 0x24>;
-
-    qcom,sde-data-bus {
-        qcom,msm-bus,name = "mdss_sde_mnoc";
-        qcom,msm-bus,vectors-KBps =
-    			<22 773 0 0>, <23 773 0 0>,
- 				<22 773 0 6400000>, <23 773 0 6400000>,
-				<22 773 0 6400000>, <23 773 0 6400000>;
-    };
-
-    qcom,sde-llcc-bus {
-        qcom,msm-bus,name = "mdss_sde_llcc";
-        qcom,msm-bus,num-cases = <3>;
-        qcom,msm-bus,num-paths = <1>;
-        qcom,msm-bus,vectors-KBps = 
-            <132 770 0 0>,
-            <132 770 0 6400000>,
-            <132 770 0 6400000>;
-    };
-
-    qcom,sde-ebi-bus {
-        qcom,msm-bus,name = "mdss_sde_ebi";
-        qcom,msm-bus,num-cases = <3>;
-        qcom,msm-bus,num-paths = <1>;
-        qcom,msm-bus,vectors-KBps = 
-            <129 512 0 0>,
-            <129 512 0 6400000>,
-            <129 512 0 6400000>;
-    };
-};
-
-&sde_dp {
-    /delete-property/ qcom,aux-sel-gpio;
-};
-
-&qcom_seecom {
-    reg = <0x86d00000 0x2200000>;
-    /delete-property/ qcom,commonlib64-loaded-by-uefi;
-};
-
-// &ipa_hw {
-    // Broken in new kernel tags, disable for now
-    // qcom,ipa-hw-mode = <1>;
-// };
-
-&soc {
-    restart@10ac000 {
-        qcom,force-warm-reboot;
-    };
-};
-
-&sdhc_2 {
-	/delete-property/ cd-gpios;
-};
-
-&pcie0 {
-    max-clock-frequency-hz = <0>, <0>, <19200000>, <0>, <0>, <0>,
-                             <0>, <0>, <0>, <100000000>, <0>;
-    pinctrl-0 = <&pcie1_wake_default>;
-
-    /delete-property/ qcom,phy-status-offset;
-};
-
-&pcie1 {
-    max-clock-frequency-hz = <0>, <0>, <19200000>, <0>, <0>, <0>,
-                             <0>, <0>, <0>, <100000000>, <0>;
-    /delete-property/ perst-gpio;
-    /delete-property/ qcom,phy-status-offset;
-};
-
-&msm_vidc {
-    venus_bus_ddr {
-        qcom,bus-master = <MSM_BUS_MASTER_VIDEO_P0>;
-    };
-
-    venus_bus_llcc {
-        qcom,bus-range-kbps = <17000 125700>;
     };
 };
 
@@ -172,17 +45,11 @@
     qcom,pet-time = <15000>;
 };
 
-&spmi_bus {
-	qcom,pm8005@4 {
-        qcom,power-on@800 {
-            compatible = "qcom,qpnp-power-on";
-            reg = <0x800 0x100>;
-        };
-    };
+&sdhc_2 {
+	/delete-property/ cd-gpios;
 };
 
-&pil_modem {
-    /delete-property/ qcom,sequential-fw-load;
+&pcie1 {
+    /delete-property/ perst-gpio;
 };
-
 

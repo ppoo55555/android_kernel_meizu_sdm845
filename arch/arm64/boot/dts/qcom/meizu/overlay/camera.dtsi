@@ -49,17 +49,19 @@
 		cell-index = <0x00>;
 		reg = <0x29>;
 		compatible = "st,stmvl53l0";
+		
 		cam_tof-supply = <&pm8998_l13>;
 		regulator-names = "cam_tof";
 		rgltr-cntrl-support;
-		rgltr-min-voltage = <0x2d0370>;
-		rgltr-max-voltage = <0x2d0370>;
-		rgltr-load-current = <0x186a0>;
-		gpios = <&tlmm 0x19 0x00>;
+		rgltr-min-voltage = <2950000>;
+		rgltr-max-voltage = <2950000>;
+		rgltr-load-current = <100000>;
+		
 		qcom,gpio-req-tbl-num = <0x00>;
 		qcom,gpio-req-tbl-flags = <0x00>;
 		qcom,gpio-req-tbl-label = "EN_PS2";
-		stm,irq-gpio = <&tlmm 0x18 0x00>;
+		gpios = <&tlmm 25 0x0>;
+		stm,irq-gpio = <&tlmm 24 0x0>;
 	};
 
 	sy7808_1@63 {

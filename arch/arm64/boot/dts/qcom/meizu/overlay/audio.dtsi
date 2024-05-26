@@ -105,7 +105,6 @@
 		cirrus,boost-cap-microfarad = <15>;
 		cirrus,boost-ind-nanohenry = <1000>;
 		cirrus,boost-peak-milliamp = <3500>;
-		cirrus,stereo-config;
 
 		VA-supply = <&pm8998_s4>;
 		VP-supply = <&vsys_regulator>;
@@ -117,5 +116,12 @@
 			cirrus,gpio-output-enable;
 			cirrus,gpio-src-select = <4>;
 		};
+	};
+};
+
+&vendor {
+	msm-cirrus-playback {
+		compatible = "cirrus,msm-cirrus-playback";
+		usecase-names = "None", "Music", "Voice", "Handsfree";
 	};
 };

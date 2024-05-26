@@ -17,18 +17,6 @@
         /delete-node/ qcom,msm-dai-q6-proxy-rx;
         /delete-node/ qcom,msm-dai-q6-proxy-tx;
     };
-
-    /delete-node/ qcom,msm-audio-ion;
-};
-
-&audio_apr {
-    msm_audio_ion: qcom,msm-audio-ion {
-        compatible = "qcom,msm-audio-ion";
-        qcom,smmu-sid-mask = /bits/ 64 <0xf>;
-        qcom,smmu-version = <2>;
-        qcom,smmu-enabled;
-        iommus = <&apps_smmu 0x1821 0x0>;
-    };
 };
 
 &msm_dai_tdm_quat_rx {

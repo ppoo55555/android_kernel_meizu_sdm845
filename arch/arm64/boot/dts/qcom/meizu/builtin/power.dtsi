@@ -141,10 +141,6 @@
     qcom,init-mode = <RPMH_REGULATOR_MODE_HPM>;
 };
 
-&pm8998_l20 {
-    qcom,init-mode = <RPMH_REGULATOR_MODE_HPM>;
-};
-
 &pm8998_l21 {
     regulator-max-microvolt = <3504000>;
 	qcom,init-voltage = <3456000>;
