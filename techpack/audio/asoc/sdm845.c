@@ -38,6 +38,7 @@
 #include "codecs/wcd934x/wcd934x.h"
 #include "codecs/wcd934x/wcd934x-mbhc.h"
 #include "codecs/wsa881x.h"
+#include <dsp/msm-cirrus-playback.h>
 
 #define DRV_NAME "sdm845-asoc-snd"
 
@@ -77,6 +78,9 @@
 
 #define TDM_MAX_SLOTS		8
 #define TDM_SLOT_WIDTH_BITS	32
+
+static atomic_t cs35l41_mclk_rsc_ref;
+static atomic_t cs35l41_calibrated = ATOMIC_INIT(0);
 
 enum {
 	SLIM_RX_0 = 0,
@@ -3910,6 +3914,7 @@ static void msm_afe_clear_config(void)
 {
 	afe_clear_config(AFE_CDC_REGISTERS_CONFIG);
 	afe_clear_config(AFE_SLIMBUS_SLAVE_CONFIG);
+	afe_clear_config(AFE_CIRRUS_PORT_CONFIG);
 }
 
 static int msm_adsp_power_up_config(struct snd_soc_codec *codec,
@@ -4974,9 +4979,142 @@ static void msm_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 
 }
 
+static void cs35l41_calibrate(void) {
+	int ret;
+
+	if (!atomic_read(&cs35l41_calibrated)) {
+		ret = msm_crus_calibrate();
+		if (ret < 0)
+			// /dev may be uninitialized at this moment
+			atomic_set(&cs35l41_calibrated, 0);
+		else
+			atomic_set(&cs35l41_calibrated, 1);
+	}
+}
+
+static int cs35l41_snd_startup(struct snd_pcm_substream *substream) {
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_card *card = rtd->card;
+	int ret, i;
+
+	if (atomic_inc_return(&cs35l41_mclk_rsc_ref) != 1)
+		return 0;
+
+	cs35l41_calibrate();
+
+	ret = msm_mi2s_snd_startup(substream);
+	if (ret < 0) {
+		dev_err(card->dev, "%s: failed to startup mi2s\n", __func__);
+		goto exit;
+	}
+
+	for (i = 0; i < rtd->num_codecs; i++) {
+		ret = snd_soc_dai_set_fmt(rtd->codec_dais[i],
+			SND_SOC_DAIFMT_CBS_CFS | SND_SOC_DAIFMT_I2S);
+		if (ret) {
+			dev_err(card->dev,
+				"%s: failed to set dai[%d] format\n", __func__, i);
+			goto exit;
+		}
+
+		ret = snd_soc_codec_set_sysclk(rtd->codec_dais[i]->codec,
+			0, 0, 1536000, SND_SOC_CLOCK_IN);
+		if (ret) {
+			dev_err(card->dev,
+				"%s: failed to set dai[%d] codec SCLK\n", __func__, i);
+			goto exit;
+		}
+
+		ret = snd_soc_dai_set_sysclk(rtd->codec_dais[i],
+			0, 1536000, SND_SOC_CLOCK_IN);
+		if (ret) {
+			dev_err(card->dev,
+				"%s: failed to set dai[%d] SCLK\n", __func__, i);
+			goto exit;
+		}
+	} 
+
+	return 0;
+
+exit:
+	atomic_dec(&cs35l41_mclk_rsc_ref);
+	return ret;
+}
+
+#define CS35L41_TARGETS_COUNT 7
+static const char *cs35l41_ignore_suspend_targets[2][CS35L41_TARGETS_COUNT] = {
+	{
+		"SPK AMP Playback",
+		"SPK AMP Capture",
+		"SPK ASPRX1",
+		"SPK ASPRX2",
+		"SPK ASPTX1",
+		"SPK ASPTX2",
+		"SPK SPK",
+	},
+	{
+		"RCV AMP Playback",
+		"RCV AMP Capture",
+		"RCV ASPRX1",
+		"RCV ASPRX2",
+		"RCV ASPTX1",
+		"RCV ASPTX2",
+		"RCV SPK",
+	},
+};
+
+static void cs35l41_snd_shutdown(struct snd_pcm_substream *substream) {
+	if (atomic_dec_return(&cs35l41_mclk_rsc_ref) != 0)
+		return;
+
+	msm_mi2s_snd_shutdown(substream);
+}
+
+static int cs35l41_init(struct snd_soc_pcm_runtime *rtd) {
+	struct snd_soc_codec *codec;
+	const char *name;
+	int i, j, ret;
+
+	cs35l41_calibrate();
+	atomic_set(&cs35l41_mclk_rsc_ref, 0);
+
+	for (i = 0; i < 2; i++) {
+		codec = rtd->codec_dais[i]->codec;
+		name = codec->dev->init_name;
+		if (!name)
+			name = codec->dev->kobj.name;
+		dev_info(rtd->card->dev, "%s: setting up %s\n",
+			__func__, name);
+		
+		for (j = 0; j < CS35L41_TARGETS_COUNT; j++)
+			snd_soc_dapm_ignore_suspend(&codec->component.dapm,
+				cs35l41_ignore_suspend_targets[i][j]);
+		snd_soc_dapm_sync(&codec->component.dapm);
+	}
+
+	return 0;
+}
+
+static struct snd_soc_dai_link_component cs35l41_codec_components[] = {
+	{
+		.name = "spi1.0",
+		.dai_name = "cs35l41-pcm",
+	},
+	{
+		.name = "spi1.1",
+		.dai_name = "cs35l41-pcm",
+	},
+	{ NULL }
+};
+
 static struct snd_soc_ops msm_mi2s_be_ops = {
 	.startup = msm_mi2s_snd_startup,
 	.shutdown = msm_mi2s_snd_shutdown,
+};
+
+static struct snd_soc_ops cs35l41_be_ops = {
+	.startup = cs35l41_snd_startup,
+	.shutdown = cs35l41_snd_shutdown,
 };
 
 static struct snd_soc_ops msm_be_ops = {
@@ -6313,13 +6451,14 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.stream_name = "Quaternary MI2S Playback",
 		.cpu_dai_name = "msm-dai-q6-mi2s.3",
 		.platform_name = "msm-pcm-routing",
-		.codec_name = "msm-stub-codec.1",
-		.codec_dai_name = "msm-stub-rx",
+		.ops = &cs35l41_be_ops,
+		.codecs = cs35l41_codec_components,
+		.init = cs35l41_init,
+		.num_codecs = 2,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_QUATERNARY_MI2S_RX,
 		.be_hw_params_fixup = msm_be_hw_params_fixup,
-		.ops = &msm_mi2s_be_ops,
 		.ignore_suspend = 1,
 		.ignore_pmdown_time = 1,
 	},
@@ -6328,14 +6467,13 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.stream_name = "Quaternary MI2S Capture",
 		.cpu_dai_name = "msm-dai-q6-mi2s.3",
 		.platform_name = "msm-pcm-routing",
-		.codec_name = "msm-stub-codec.1",
-		.codec_dai_name = "msm-stub-tx",
-		.no_pcm = 1,
-		.dpcm_capture = 1,
+		.ops = &cs35l41_be_ops,
+		.codecs = cs35l41_codec_components,
+		.num_codecs = 2,
 		.id = MSM_BACKEND_DAI_QUATERNARY_MI2S_TX,
 		.be_hw_params_fixup = msm_be_hw_params_fixup,
-		.ops = &msm_mi2s_be_ops,
 		.ignore_suspend = 1,
+		.no_host_mode = 1,
 	},
 };
 

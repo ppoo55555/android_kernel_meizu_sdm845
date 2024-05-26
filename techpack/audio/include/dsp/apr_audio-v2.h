@@ -10127,7 +10127,7 @@ struct afe_clk_set {
 	 * for enable and disable clock.
 	 *	"clk_freq_in_hz", "clk_attri", and "clk_root"
 	 *	are ignored in disable clock case.
-	 *	@values 
+	 *	@valuesï¿½
 	 *	- 0 -- Disabled
 	 *	- 1 -- Enabled  @tablebulletend
 	 */
@@ -10281,6 +10281,7 @@ enum afe_config_type {
 	AFE_CDC_CLIP_REGISTERS_CONFIG,
 	AFE_CLIP_BANK_SEL,
 	AFE_CDC_REGISTER_PAGE_CONFIG,
+	AFE_CIRRUS_PORT_CONFIG,
 	AFE_MAX_CONFIG_TYPES,
 };
 

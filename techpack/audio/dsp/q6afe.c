@@ -25,6 +25,7 @@
 #include <dsp/q6audio-v2.h>
 #include <ipc/apr_tal.h>
 #include "adsp_err.h"
+#include <dsp/msm-cirrus-playback.h>
 
 #define WAKELOCK_TIMEOUT	5000
 enum {
@@ -375,6 +376,10 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 			av_dev_drift_afe_cb_handler(data->payload,
 						    data->payload_size);
 		} else {
+			if (!crus_afe_callback(data->payload,
+					       data->payload_size))
+				return 0;
+			
 			if (sp_make_afe_callback(data->payload,
 						 data->payload_size))
 				return -EINVAL;
@@ -805,6 +810,24 @@ static int afe_apr_send_pkt(void *data, wait_queue_head_t *wait)
 	pr_debug("%s: leave %d\n", __func__, ret);
 	return ret;
 }
+
+int afe_apr_send_pkt_crus(void *data, int index, int set)
+{
+	int ret = 0;
+
+	ret = afe_q6_interface_prepare();
+	if (ret != 0) {
+		pr_err("%s: Q6 interface prepare failed ret: %d\n",
+				__func__, ret);
+		return -EINVAL;
+	}
+
+	if (set)
+		return afe_apr_send_pkt(data, &this_afe.wait[index]);
+	else /* get */
+		return afe_apr_send_pkt(data, 0);
+}
+EXPORT_SYMBOL(afe_apr_send_pkt_crus);
 
 static int afe_send_cal_block(u16 port_id, struct cal_block_data *cal_block)
 {
@@ -3967,6 +3990,7 @@ int afe_get_port_index(u16 port_id)
 		return -EINVAL;
 	}
 }
+EXPORT_SYMBOL(afe_get_port_index);
 
 int afe_open(u16 port_id,
 		union afe_port_config *afe_config, int rate)
