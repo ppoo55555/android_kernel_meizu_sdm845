@@ -116,6 +116,7 @@ struct stmvl53l0_data {
 	uint16_t  comms_speed_khz;
 	/* CCI_BUS; I2C_BUS */
 	uint8_t   bus_type;
+	uint8_t   chip_version;
 
 	void *client_object; /* cci or i2c client */
 

@@ -32,6 +32,7 @@
 #include <linux/platform_device.h>
 #include <linux/kobject.h>
 #include <linux/kthread.h>
+#include <linux/meizu.h>
 /*
  * API includes
  */
@@ -43,6 +44,8 @@
 #ifdef DEBUG_TIME_LOG
 struct timeval start_tv, stop_tv;
 #endif
+
+int laser_cal_data[4];
 
 /*
  * Global data
@@ -57,8 +60,6 @@ static struct stmvl53l0_module_fn_t stmvl53l0_module_func_tbl = {
 	.query_power_status = stmvl53l0_cci_power_status,
 };
 #else
-extern int stmvl53l0_i2c_power_status(void *i2c_object);
-
 static struct stmvl53l0_module_fn_t stmvl53l0_module_func_tbl = {
 	.init = stmvl53l0_init_i2c,
 	.deinit = stmvl53l0_exit_i2c,
@@ -407,8 +408,8 @@ struct stmvl53l0_api_fn_t *papi_func_tbl;
 #define USE_CASE_HIGH_SPEED		3
 #define USE_CASE_CUSTOM			4
 
-#define LONG_DISTANCE_TIMING_BUDGET			26000
-#define LONG_DISTANCE_SIGNAL_RATE_LIMIT		(65536 / 10) /* 0.1  */
+#define LONG_DISTANCE_TIMING_BUDGET			33000
+#define LONG_DISTANCE_SIGNAL_RATE_LIMIT		(65536 / 3) /* 0.33  */
 #define LONG_DISTANCE_SIGMA_LIMIT			(60*65536)
 #define LONG_DISTANCE_PRE_RANGE_PULSE_PERIOD	18
 #define LONG_DISTANCE_FINAL_RANGE_PULSE_PERIOD	14
@@ -417,7 +418,7 @@ struct stmvl53l0_api_fn_t *papi_func_tbl;
 
 #define HIGH_ACCURACY_TIMING_BUDGET				200000
 #define HIGH_ACCURACY_SIGNAL_RATE_LIMIT	 (25 * 65536 / 100) /*0.25*/
-#define HIGH_ACCURACY_SIGMA_LIMIT				(35*65536)
+#define HIGH_ACCURACY_SIGMA_LIMIT				(18*65536)
 #define HIGH_ACCURACY_PRE_RANGE_PULSE_PERIOD	14
 #define HIGH_ACCURACY_FINAL_RANGE_PULSE_PERIOD	10
 
@@ -450,6 +451,22 @@ static int stmvl53l0_start(struct stmvl53l0_data *data, uint8_t scaling,
 			init_mode_e mode);
 static int stmvl53l0_stop(struct stmvl53l0_data *data);
 static int stmvl53l0_config_use_case(struct stmvl53l0_data *data);
+
+int vl53l0_read_mz_calib(VL53L0_DEV data) {
+	int rc;
+	
+	rc = mz_private_read((char *)laser_cal_data, 16, 0x12800);
+	if (rc < 0) {
+		vl53l0_errmsg("%d, failed to read calibration %d\n", __LINE__, rc);
+		return -EINVAL;
+	}
+
+	data->setCalibratedValue = SET_OFFSET_CALIB_DATA_MICROMETER_MASK;
+	data->setCalibratedValue |= SET_XTALK_COMP_RATE_MCPS_MASK;
+	data->OffsetMicroMeter = laser_cal_data[0];
+	data->XTalkCompensationRateMegaCps = laser_cal_data[1];
+	return 0;
+}
 
 #ifdef CALIBRATION_FILE
 #define UINT_MAX_LEN	11
@@ -2715,6 +2732,9 @@ static int stmvl53l0_start(struct stmvl53l0_data *data, uint8_t scaling,
 		pmodule_func_tbl->power_down(data->client_object);
 		return -EINVAL;
 	}
+
+	if (mode == NORMAL_MODE)
+		vl53l0_read_mz_calib(vl53l0_dev);
 
 	/* check mode */
 	if (mode != NORMAL_MODE)

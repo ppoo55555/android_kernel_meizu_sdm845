@@ -45,84 +45,190 @@
 #include "vl53l0_def.h"
 #include "vl53l0_platform.h"
 #include "stmvl53l0-i2c.h"
-#include "stmvl53l0-cci.h"
 #include "stmvl53l0.h"
-#ifndef CAMERA_CCI
 
-/*
- * Global data
- */
-static int stmvl53l0_parse_vdd(struct device *dev, struct i2c_data *data);
-
-/*
- * QCOM specific functions
- */
-static int stmvl53l0_parse_vdd(struct device *dev, struct i2c_data *data)
+static int msm_tof_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
-	int ret = 0;
-
-	vl53l0_dbgmsg("Enter\n");
-
-	if (dev->of_node) {
-		data->vana = regulator_get(dev, "vdd");
-		if (IS_ERR(data->vana)) {
-			vl53l0_errmsg("Cannot get vdd supply: %ld\n",
-						PTR_ERR(data->vana));
-			return PTR_ERR(data->vana);
-		}
-
-		/* Not mandatory */
-		data->avdd = regulator_get(dev, "tof_avdd");
-		if (IS_ERR(data->avdd)) {
-			vl53l0_errmsg("tof_avdd supply not provided\n");
-			ret = 0;
-		}
-	}
-	vl53l0_dbgmsg("End\n");
-
-	return ret;
+	return 0;
 }
 
-static int stmvl53l0_parse_pins(struct device *dev, struct i2c_data *data)
+static long msm_tof_subdev_ioctl(struct v4l2_subdev *sd,
+			unsigned int cmd, void *arg)
+{
+	return 0;
+}
+
+static int32_t msm_tof_power(struct v4l2_subdev *sd, int on)
+{
+	return 0;
+}
+
+static struct v4l2_subdev_core_ops msm_tof_subdev_core_ops = {
+	.ioctl = msm_tof_subdev_ioctl,
+	.s_power = msm_tof_power,
+};
+
+static const struct v4l2_subdev_internal_ops msm_tof_internal_ops = {
+	.close = msm_tof_close,
+};
+
+static struct v4l2_subdev_ops msm_tof_subdev_ops = {
+	.core = &msm_tof_subdev_core_ops,
+};
+
+static int stmvl53l0_parse_dt(struct device *dev, struct i2c_data *data)
 {
 	int ret = 0;
 
-	if (dev->of_node) {
-		data->rst_gpio = of_get_named_gpio(dev->of_node,
-						"tof-reset-gpio", 0);
+	data->subdev_initialized = 0;
+
+	if (!dev->of_node)
+		return -EINVAL;
+	
+	data->irq_gpio = of_get_named_gpio(dev->of_node,
+					"stm,irq-gpio", 0);
+	if (!gpio_is_valid(data->irq_gpio)) {
+		dev_err(dev, "IRQ GPIO is invalid\n");
+		return -EINVAL;
 	}
 
-	data->pinctrl = devm_pinctrl_get(dev);
-	if (IS_ERR(data->pinctrl)) {
-		dev_err(dev, "Failed to get pinctrl handle.\n");
-		return -EPROBE_DEFER;
+	data->rst_gpio = of_get_named_gpio(dev->of_node,
+					"gpios", 0);
+	if (!gpio_is_valid(data->irq_gpio)) {
+		dev_err(dev, "reset GPIO is invalid\n");
+		return -EINVAL;
 	}
 
-	data->pinstate_act = pinctrl_lookup_state(data->pinctrl,
-						"tof_irq_active");
-	if (IS_ERR(data->pinstate_act)) {
-		dev_err(dev, "Cannot lookup active state\n");
-		ret = -EPROBE_DEFER;
-		goto err_pinact;
+	ret = devm_gpio_request_one(dev,
+		data->rst_gpio, GPIOF_DIR_OUT,
+		"stmvl53L0-reset");
+	if (ret < 0) {
+		dev_err(dev, "failed to request reset GPIO: %d\n", ret);
+		return -EINVAL;
 	}
 
-	data->pinstate_slp = pinctrl_lookup_state(data->pinctrl,
-						"tof_irq_suspend");
-	if (IS_ERR(data->pinstate_act)) {
-		dev_err(dev, "Cannot lookup sleep state\n");
-		ret = -EPROBE_DEFER;
-		goto err_pinslp;
+	gpio_set_value_cansleep(data->rst_gpio, 0);
+
+	ret = of_property_read_string(dev->of_node,
+			"regulator-names", &data->vana_name);
+	if (ret < 0) {
+		dev_err(dev, "regulator name is invalid\n");
+		return -EINVAL;
 	}
 
-	data->pinctrl_avail = true;
+	ret = of_property_read_u32(dev->of_node,
+			"rgltr-min-voltage", &data->vana_min_voltage);
+	if (ret < 0) {
+		dev_err(dev, "regulator minimum voltage is invalid\n");
+		return -EINVAL;
+	}
 
-	return ret;
+	ret = of_property_read_u32(dev->of_node,
+			"rgltr-max-voltage", &data->vana_max_voltage);
+	if (ret < 0) {
+		dev_err(dev, "regulator maximum voltage is invalid\n");
+		return -EINVAL;
+	}
 
-err_pinact:
-err_pinslp:
-	devm_pinctrl_put(data->pinctrl);
+	ret = of_property_read_u32(dev->of_node,
+			"rgltr-load-current", &data->vana_load);
+	if (ret < 0) {
+		dev_err(dev, "regulator load current is invalid\n");
+		return -EINVAL;
+	}
 
-	return ret;
+	data->vana = devm_regulator_get(dev, data->vana_name);
+	if (IS_ERR(data->vana)) {
+		dev_err(dev, "invalid vana regulator %s\n", data->vana_name);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int stmvl53l0_enable_vana(struct i2c_data *data)
+{
+	int ret = 0;
+
+	ret = regulator_set_voltage(data->vana,
+		data->vana_min_voltage, data->vana_max_voltage);
+	if (ret < 0) {
+		pr_err("%s: failed to set vana voltage: %d\n", __func__, ret);
+		return -EINVAL;
+	}
+
+	ret = regulator_set_load(data->vana, data->vana_load);
+	if (ret < 0) {
+		pr_err("%s: failed to set vana voltage: %d\n", __func__, ret);
+		return -EINVAL;
+	}
+
+	ret = regulator_enable(data->vana);
+	if (ret < 0) {
+		pr_err("%s: failed to enable VANA: %d\n", __func__, ret);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int stmvl53l0_disable_vana(struct i2c_data *data)
+{
+	int ret = 0;
+
+	ret = regulator_disable(data->vana);
+	if (ret < 0) {
+		pr_err("%s: failed to enable VANA: %d\n", __func__, ret);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int stmvl53l0_reset(struct i2c_data *data, bool enable)
+{
+	if (!gpio_is_valid(data->rst_gpio))
+		return -EINVAL;
+
+	if (enable) {
+		gpio_set_value_cansleep(data->rst_gpio, 1);
+		usleep_range(2950, 3000);
+	} else {
+		usleep_range(2950, 3000);
+		gpio_set_value_cansleep(data->rst_gpio, 0);
+	}
+	return 0;
+}
+
+static int stmvl53l0_init_subdev(struct device *dev, struct i2c_data *data)
+{
+	int ret = 0;
+
+	while (data->subdev_initialized == false) {
+		data->v4l2_dev_str.internal_ops =
+			&msm_tof_internal_ops;
+		data->v4l2_dev_str.ops = &msm_tof_subdev_ops;
+		strcpy(data->v4l2_dev_str.name, CAMX_TOF_DEV_NAME);
+		data->v4l2_dev_str.sd_flags =
+			V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
+		data->v4l2_dev_str.ent_function = CAM_IRLED_DEVICE_TYPE;
+		data->v4l2_dev_str.token = data;
+
+		ret = cam_register_subdev(&(data->v4l2_dev_str));
+		if (ret) {
+			dev_err(dev, "Fail to create subdev with %d", ret);
+			continue;
+		}
+
+		data->subdev_initialized = true;
+	}
+
+	if (dev->init_name == NULL)
+		strlcpy(data->device_name, dev->init_name, sizeof(data->device_name));
+	else
+		strlcpy(data->device_name, dev->kobj.name, sizeof(data->device_name));
+
+	return 0;
 }
 
 static int stmvl53l0_probe(struct i2c_client *client,
@@ -154,13 +260,15 @@ static int stmvl53l0_probe(struct i2c_client *client,
 	/* setup bus type */
 	vl53l0_data->bus_type = I2C_BUS;
 
-	/* setup regulator */
-	rc = stmvl53l0_parse_vdd(&i2c_object->client->dev, i2c_object);
+	/* setup pinctrl and gpios */
+	rc = stmvl53l0_parse_dt(&i2c_object->client->dev, i2c_object);
 	if (rc)
 		goto end;
 
-	/* setup pinctrl and gpios */
-	rc = stmvl53l0_parse_pins(&i2c_object->client->dev, i2c_object);
+	vl53l0_data->irq_gpio = i2c_object->irq_gpio;
+
+	/* setup msm camera subdev */
+	rc = stmvl53l0_init_subdev(&i2c_object->client->dev, i2c_object);
 	if (rc)
 		goto end;
 
@@ -231,54 +339,29 @@ static struct i2c_driver stmvl53l0_driver = {
 int stmvl53l0_power_up_i2c(void *i2c_object, unsigned int *preset_flag)
 {
 	int ret = 0;
-#ifndef STM_TEST
 	struct i2c_data *data = (struct i2c_data *)i2c_object;
-#endif
 
 	vl53l0_dbgmsg("Enter\n");
 
-	/* actual power on */
-#ifndef STM_TEST
- #ifndef CONFIG_INPUT_STMVL53L0_SOMC_PARAMS
-	ret = regulator_set_voltage(data->vana, VL53L0_VDD_MIN, VL53L0_VDD_MAX);
+	ret = stmvl53l0_enable_vana(data);
 	if (ret < 0) {
-		vl53l0_errmsg("set_vol(%p) fail %d\n", data->vana, ret);
-		return ret;
+		pr_err("%s: failed to enable vana\n", __func__);
+		goto err;
 	}
- #endif /* INPUT_STMVL53L0_SOMC_PARAMS */
-	ret = regulator_enable(data->vana);
 
-	usleep_range(2950, 3000);
+	ret = stmvl53l0_reset(data, true);
 	if (ret < 0) {
-		vl53l0_errmsg("reg enable(%p) failed.rc=%d\n", data->vana, ret);
- #ifndef CONFIG_INPUT_STMVL53L0_SOMC_PARAMS
-		return ret;
- #endif
-	}
-
-	if (!IS_ERR_OR_NULL(data->avdd)) {
-		ret = regulator_enable(data->avdd);
-		if (ret < 0) {
-			vl53l0_errmsg("Cannot enable AVDD VREG: %d\n", ret);
-			return ret;
-		}
-		usleep_range(2950, 3000);
-	}
-
-	if (data->pinctrl_avail)
-		pinctrl_select_state(data->pinctrl, data->pinstate_act);
-
-	/* Deassert RST if GPIO is available */
-	if (gpio_is_valid(data->rst_gpio)) {
-		gpio_set_value(data->rst_gpio, 1);
-		usleep_range(1000, 1500);
+		pr_err("%s: failed to reset\n", __func__);
+		goto err;
 	}
 
 	data->power_up = 1;
 	*preset_flag = 1;
-#endif
 
 	vl53l0_dbgmsg("End\n");
+	return 0;
+err:
+	cam_unregister_subdev(&data->v4l2_dev_str);
 	return ret;
 }
 
@@ -286,42 +369,34 @@ int stmvl53l0_power_up_i2c(void *i2c_object, unsigned int *preset_flag)
 int stmvl53l0_i2c_power_status(void *i2c_object)
 {
 	struct i2c_data *data = (struct i2c_data *)i2c_object;
-
 	return data->power_up;
 }
 
 int stmvl53l0_power_down_i2c(void *i2c_object)
 {
 	int ret = 0;
-#ifndef STM_TEST
 	struct i2c_data *data = (struct i2c_data *)i2c_object;
-#endif
 
 	vl53l0_dbgmsg("Enter\n");
-#ifndef STM_TEST
-	usleep_range(2950, 3000);
-	ret = regulator_disable(data->vana);
-	if (ret < 0)
-		vl53l0_errmsg("reg disable(%p) failed.rc=%d\n",
-			      data->vana, ret);
 
-	/* Assert RST if GPIO is available */
-	if (gpio_is_valid(data->rst_gpio))
-		gpio_set_value(data->rst_gpio, 0);
+	ret = stmvl53l0_reset(data, false);
+	if (ret < 0) {
+		pr_err("%s: failed to disable chip\n", __func__);
+		goto err;
+	}
 
-	if (data->pinctrl_avail)
-		pinctrl_select_state(data->pinctrl, data->pinstate_slp);
-
-	if (!IS_ERR_OR_NULL(data->avdd)) {
-		ret = regulator_disable(data->avdd);
-		if (ret < 0)
-			vl53l0_errmsg("Cannot disable AVDD VREG: %d\n", ret);
+	ret = stmvl53l0_disable_vana(data);
+	if (ret < 0) {
+		pr_err("%s: failed to disable vana\n", __func__);
+		goto err;
 	}
 
 	data->power_up = 0;
-#endif
 
 	vl53l0_dbgmsg("End\n");
+	return 0;
+err:
+	cam_unregister_subdev(&data->v4l2_dev_str);
 	return ret;
 }
 
@@ -329,33 +404,12 @@ int stmvl53l0_init_i2c(void)
 {
 	int ret = 0;
 
-#ifdef STM_TEST
-	struct i2c_client *client = NULL;
-	struct i2c_adapter *adapter;
-	struct i2c_board_info info = {
-		.type = "stmvl53l0",
-		.addr = STMVL53L0_SLAVE_ADDR,
-	};
-#endif
-
 	vl53l0_dbgmsg("Enter\n");
 
 	/* register as a i2c client device */
 	ret = i2c_add_driver(&stmvl53l0_driver);
 	if (ret)
 		vl53l0_errmsg("%d erro ret:%d\n", __LINE__, ret);
-
-#ifdef STM_TEST
-	if (!ret) {
-		adapter = i2c_get_adapter(4);
-		if (!adapter)
-			ret = -EINVAL;
-		else
-			client = i2c_new_device(adapter, &info);
-		if (!client)
-			ret = -EINVAL;
-	}
-#endif
 
 	vl53l0_dbgmsg("End with rc:%d\n", ret);
 
@@ -369,5 +423,3 @@ void stmvl53l0_exit_i2c(void *i2c_object)
 
 	vl53l0_dbgmsg("End\n");
 }
-
-#endif				/* end of NOT CAMERA_CCI */
