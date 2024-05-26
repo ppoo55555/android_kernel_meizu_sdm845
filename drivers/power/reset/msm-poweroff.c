@@ -288,18 +288,21 @@ static void msm_restart_prepare(const char *cmd)
 	 * Kill download mode if master-kill switch is set
 	 */
 
-	set_dload_mode(download_mode &&
-			(in_panic || restart_mode == RESTART_DLOAD));
+#if 0
+	set_dload_mode(download_mode && (in_panic || restart_mode == RESTART_DLOAD));
+#else
+	set_dload_mode(false);
+#endif
 #endif
 
 	if (qpnp_pon_check_hard_reset_stored()) {
 		/* Set warm reset as true when device is in dload mode */
 		if (get_dload_mode() ||
 			((cmd != NULL && cmd[0] != '\0') &&
-			!strcmp(cmd, "edl")))
+			!strcmp(cmd, "edl")) || in_panic)
 			need_warm_reset = true;
 	} else {
-		need_warm_reset = (get_dload_mode() ||
+		need_warm_reset = in_panic || (get_dload_mode() ||
 				(cmd != NULL && cmd[0] != '\0'));
 	}
 
@@ -312,7 +315,10 @@ static void msm_restart_prepare(const char *cmd)
 	else
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 
-	if (cmd != NULL) {
+	if (in_panic) {
+		qpnp_pon_set_restart_reason(PON_RESTART_REASON_RECOVERY);
+		__raw_writel(0x77665502, restart_reason);
+	} else if (cmd != NULL) {
 		if (!strncmp(cmd, "bootloader", 10)) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_BOOTLOADER);
@@ -363,11 +369,20 @@ static void msm_restart_prepare(const char *cmd)
 					     restart_reason);
 			}
 		} else if (!strncmp(cmd, "edl", 3)) {
+			qpnp_pon_set_restart_reason(PON_RESTART_REASON_EDL);
 			enable_emergency_dload_mode();
+		} else if (!strncmp(cmd, "userrequested", 3)) {
+			qpnp_pon_set_restart_reason(PON_RESTART_REASON_NORMAL_ANDROID);
+		} else if (!strncmp(cmd, "ffbm", 3)) {
+			qpnp_pon_set_restart_reason(PON_RESTART_REASON_ENTER_FFBM);
+		} else if (!strncmp(cmd, "exit-ffbm", 3)) {
+			qpnp_pon_set_restart_reason(PON_RESTART_REASON_EXIT_FFBM);
 		} else {
+			qpnp_pon_set_restart_reason(PON_RESTART_REASON_OTHER);
 			__raw_writel(0x77665501, restart_reason);
 		}
-	}
+	} else
+	  	qpnp_pon_set_restart_reason(PON_RESTART_REASON_NULL);
 
 	flush_cache_all();
 
@@ -408,14 +423,16 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 
 	msm_restart_prepare(cmd);
 
-#ifdef CONFIG_QCOM_DLOAD_MODE
+#ifdef CONFIG_QCOM_DLOAD_MODE 
 	/*
 	 * Trigger a watchdog bite here and if this fails,
 	 * device will take the usual restart path.
 	 */
 
+#if 0
 	if (WDOG_BITE_ON_PANIC && in_panic)
 		msm_trigger_wdog_bite();
+#endif
 #endif
 
 	scm_disable_sdi();
