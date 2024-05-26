@@ -130,11 +130,35 @@ static DEFINE_MUTEX(sd_ref_mutex);
 
 static struct kmem_cache *sd_cdb_cache;
 static mempool_t *sd_cdb_pool;
+static struct gendisk *ufs_disk = NULL;
 
 static const char *sd_cache_types[] = {
 	"write through", "none", "write back",
 	"write back, no read (daft)"
 };
+
+dev_t sd_lookup_partition(const char *name) {
+	struct disk_part_iter piter;
+	struct hd_struct *part;
+	dev_t ret = MKDEV(0, 0);
+	const char *tname;
+
+	if (!ufs_disk)
+		return ret;
+
+	disk_part_iter_init(&piter, ufs_disk, DISK_PITER_INCL_PART0);
+	while ((part = disk_part_iter_next(&piter))) {
+		tname = part->info ? part->info->volname : "null";
+		if (!strcmp(name, tname)) {
+			ret = part_to_dev(part)->devt;
+			break;
+		}
+	}
+
+	disk_part_iter_exit(&piter);
+	return ret;
+}
+EXPORT_SYMBOL(sd_lookup_partition);
 
 static void sd_set_flush_flag(struct scsi_disk *sdkp)
 {
@@ -3005,6 +3029,9 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 	device_add_disk(dev, gd);
 	if (sdkp->capacity)
 		sd_dif_config_host(sdkp);
+
+	if (!strcmp(gd->disk_name, "sda"))
+		ufs_disk = gd;
 
 	sd_revalidate_disk(gd);
 
