@@ -38,6 +38,7 @@
 #include <dsp/q6lsm.h>
 #include <dsp/q6core.h>
 #include <dsp/audio_cal_utils.h>
+#include <dsp/msm-cirrus-playback.h>
 
 #include "msm-pcm-routing-v2.h"
 #include "msm-pcm-routing-devdep.h"
@@ -19552,6 +19553,8 @@ static int msm_routing_probe(struct snd_soc_platform *platform)
 	snd_soc_add_platform_controls(platform,
 		msm_routing_be_dai_name_table_mixer_controls,
 		ARRAY_SIZE(msm_routing_be_dai_name_table_mixer_controls));
+
+	msm_crus_pb_add_controls(platform);
 
 	snd_soc_add_platform_controls(platform, msm_source_tracking_controls,
 				ARRAY_SIZE(msm_source_tracking_controls));

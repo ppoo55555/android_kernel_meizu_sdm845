@@ -212,6 +212,12 @@ static DECLARE_TLV_DB_SCALE(amp_gain_tlv, 0, 1, 1);
 static const struct snd_kcontrol_new dre_ctrl =
 	SOC_DAPM_SINGLE("Switch", CS35L41_PWR_CTRL3, 20, 1, 0);
 
+static const struct snd_kcontrol_new amp_enable_ctrl =
+	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0);
+
+static const struct snd_kcontrol_new tx_enable_ctrl =
+	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0);
+
 static const char * const cs35l41_pcm_sftramp_text[] =  {
 	"Off", ".5ms", "1ms", "2ms", "4ms", "8ms", "15ms", "30ms"};
 
@@ -360,15 +366,9 @@ static int cs35l41_cspl_cmd_get(struct snd_kcontrol *kcontrol,
 
 	return ret;
 }
-static const char *virt_text[] = { "None", "Ref"};
-static SOC_ENUM_SINGLE_DECL(virt_enum,
-			    SND_SOC_NOPM, 2, virt_text);
 
-static const struct snd_kcontrol_new virt_mux =
-	SOC_DAPM_ENUM("Virt Connect", virt_enum);
-
-static const char * const cs35l41_pcm_source_texts[] = {"None", "ASP", "DSP"};
-static const unsigned int cs35l41_pcm_source_values[] = {0x00, 0x08, 0x32};
+static const char * const cs35l41_pcm_source_texts[] = {"None", "ASPRX1", "ASPRX2", "DSP"};
+static const unsigned int cs35l41_pcm_source_values[] = {0x00, 0x08, 0x09, 0x32};
 static SOC_VALUE_ENUM_SINGLE_DECL(cs35l41_pcm_source_enum,
 				CS35L41_DAC_PCM1_SRC,
 				0, CS35L41_ASP_SOURCE_MASK,
@@ -852,7 +852,6 @@ static const struct snd_soc_dapm_widget cs35l41_dapm_widgets[] = {
 	SND_SOC_DAPM_INPUT("VSENSE"),
 	SND_SOC_DAPM_INPUT("TEMP"),
 
-	SND_SOC_DAPM_MUX("ASPTX Ref", SND_SOC_NOPM, 0, 0, &virt_mux),
 	SND_SOC_DAPM_MUX("ASP TX1 Source", SND_SOC_NOPM, 0, 0, &asp_tx1_mux),
 	SND_SOC_DAPM_MUX("ASP TX2 Source", SND_SOC_NOPM, 0, 0, &asp_tx2_mux),
 	SND_SOC_DAPM_MUX("ASP TX3 Source", SND_SOC_NOPM, 0, 0, &asp_tx3_mux),
@@ -861,11 +860,14 @@ static const struct snd_soc_dapm_widget cs35l41_dapm_widgets[] = {
 	SND_SOC_DAPM_MUX("DSP RX2 Source", SND_SOC_NOPM, 0, 0, &dsp_rx2_mux),
 	SND_SOC_DAPM_MUX("PCM Source", SND_SOC_NOPM, 0, 0, &pcm_source_mux),
 	SND_SOC_DAPM_SWITCH("DRE", SND_SOC_NOPM, 0, 0, &dre_ctrl),
-
+	SND_SOC_DAPM_SWITCH("AMP Enable", SND_SOC_NOPM, 0, 1, &amp_enable_ctrl),
+	SND_SOC_DAPM_SWITCH("ASP TX Enable", SND_SOC_NOPM, 0, 1, &tx_enable_ctrl),
 };
 
 static const struct snd_soc_dapm_route cs35l41_audio_map[] = {
 
+	{ "DSP1", NULL, "ASPRX1" },
+	{ "DSP1", NULL, "ASPRX2" },
 	{ "DSP1", NULL, "DSP1 Preloader" },
 	{ "DSP1 Preload", NULL, "DSP1 Preloader" },
 
@@ -921,10 +923,12 @@ static const struct snd_soc_dapm_route cs35l41_audio_map[] = {
 	{"ASPTX2", NULL, "ASP TX2 Source"},
 	{"ASPTX3", NULL, "ASP TX3 Source"},
 	{"ASPTX4", NULL, "ASP TX4 Source"},
-	{"AMP Capture", NULL, "ASPTX1"},
-	{"AMP Capture", NULL, "ASPTX2"},
-	{"AMP Capture", NULL, "ASPTX3"},
-	{"AMP Capture", NULL, "ASPTX4"},
+
+	{"ASP TX Enable", "Switch", "ASPTX1"},
+	{"ASP TX Enable", "Switch", "ASPTX2"},
+	{"ASP TX Enable", "Switch", "ASPTX3"},
+	{"ASP TX Enable", "Switch", "ASPTX4"},
+	{"AMP Capture", NULL, "ASP TX Enable"},
 
 	{"VMON ADC", NULL, "ASPRX1"},
 	{"IMON ADC", NULL, "ASPRX1"},
@@ -938,19 +942,17 @@ static const struct snd_soc_dapm_route cs35l41_audio_map[] = {
 	{"DSP1", NULL, "VPMON ADC"},
 	{"DSP1", NULL, "TEMPMON ADC"},
 
-	{"ASPRX1", NULL, "AMP Playback"},
-	{"ASPRX2", NULL, "AMP Playback"},
+	{"AMP Enable", "Switch", "AMP Playback"},
+	{"ASPRX1", NULL, "AMP Enable"},
+	{"ASPRX2", NULL, "AMP Enable"},
 	{"DRE", "Switch", "CLASS H"},
 	{"Main AMP", NULL, "CLASS H"},
 	{"Main AMP", NULL, "DRE"},
 	{"SPK", NULL, "Main AMP"},
-	{"Main AMP", NULL, "ASPTX Ref"},
-	{"ASPTX Ref", "Ref", "ASPTX1"},
-	{"ASPTX Ref", "Ref", "ASPTX2"},
-	{"PCM Source", "ASP", "ASPRX1"},
+	{"PCM Source", "ASPRX1", "ASPRX1"},
+	{"PCM Source", "ASPRX2", "ASPRX2"},
 	{"PCM Source", "DSP", "DSP1"},
 	{"CLASS H", NULL, "PCM Source"},
-
 };
 
 static const struct wm_adsp_region cs35l41_dsp1_regions[] = {
@@ -1083,7 +1085,6 @@ static int cs35l41_pcm_hw_params(struct snd_pcm_substream *substream,
 	asp_wl = params_width(params);
 	asp_width = params_physical_width(params);
 
-	cs35l41_codec_set_sysclk(dai->codec, 0, 0, 2*rate*asp_width, 0);
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		regmap_update_bits(cs35l41->regmap, CS35L41_SP_FORMAT,
 				CS35L41_ASP_WIDTH_RX_MASK,
@@ -1474,19 +1475,6 @@ static int cs35l41_codec_probe(struct snd_soc_codec *codec)
 	}
 
 	wm_adsp2_codec_probe(&cs35l41->dsp, codec);
-
-	snd_soc_dapm_ignore_suspend(dapm, "AMP Playback");
-	snd_soc_dapm_ignore_suspend(dapm, "AMP Capture");
-	snd_soc_dapm_ignore_suspend(dapm, "Main AMP");
-	snd_soc_dapm_ignore_suspend(dapm, "SPK");
-	snd_soc_dapm_ignore_suspend(dapm, "VP");
-	snd_soc_dapm_ignore_suspend(dapm, "VBST");
-	snd_soc_dapm_ignore_suspend(dapm, "ISENSE");
-	snd_soc_dapm_ignore_suspend(dapm, "VSENSE");
-	snd_soc_dapm_ignore_suspend(dapm, "TEMP");
-	snd_soc_dapm_ignore_suspend(dapm, "DSP1 Preloader");
-	snd_soc_dapm_ignore_suspend(dapm, "DSP1 Preload");
-
 	return 0;
 }
 
@@ -1608,11 +1596,11 @@ static struct snd_soc_codec_driver soc_codec_dev_cs35l41 = {
 	.remove = cs35l41_codec_remove,
 	.component_driver = {
 		.dapm_widgets = cs35l41_dapm_widgets,
-		.num_dapm_widgets = ARRAY_SIZE(cs35l41_dapm_widgets),
+		.num_dapm_widgets = ARRAY_SIZE(cs35l41_dapm_widgets), // 30
 		.dapm_routes = cs35l41_audio_map,
-		.num_dapm_routes = ARRAY_SIZE(cs35l41_audio_map),
+		.num_dapm_routes = ARRAY_SIZE(cs35l41_audio_map), // 62
 		.controls = cs35l41_aud_controls,
-		.num_controls = ARRAY_SIZE(cs35l41_aud_controls),
+		.num_controls = ARRAY_SIZE(cs35l41_aud_controls), // 11
 	},
 	.set_sysclk = cs35l41_codec_set_sysclk,
 	.ignore_pmdown_time = false,

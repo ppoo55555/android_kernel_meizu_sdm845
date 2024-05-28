@@ -12,7 +12,6 @@
  */
 
 #include "pinctrl.dtsi"
-#include "audio.dtsi"
 #include "memory.dtsi"
 #include "power.dtsi"
 #include "usb.dtsi"

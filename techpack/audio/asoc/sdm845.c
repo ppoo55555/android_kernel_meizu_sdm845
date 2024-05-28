@@ -4535,6 +4535,12 @@ static int msm_set_pinctrl(struct msm_pinctrl_info *pinctrl_info,
 		}
 		break;
 	case STATE_TDM_ACTIVE:
+		if (IS_ERR(pinctrl_info->tdm_disable)) {
+			pr_err("%s: TDM pins are invalid\n", __func__);
+			ret = -EINVAL;
+			goto err;
+		}
+
 		ret = pinctrl_select_state(pinctrl_info->pinctrl,
 					pinctrl_info->tdm_active);
 		if (ret) {
@@ -4548,7 +4554,7 @@ static int msm_set_pinctrl(struct msm_pinctrl_info *pinctrl_info,
 		if (curr_state == STATE_MI2S_ACTIVE) {
 			ret = pinctrl_select_state(pinctrl_info->pinctrl,
 					pinctrl_info->mi2s_disable);
-		} else {
+		} else if (!IS_ERR(pinctrl_info->tdm_disable)) {
 			ret = pinctrl_select_state(pinctrl_info->pinctrl,
 					pinctrl_info->tdm_disable);
 		}
@@ -4619,14 +4625,12 @@ static int msm_get_pinctrl(struct platform_device *pdev)
 						"quat-tdm-sleep");
 	if (IS_ERR(pinctrl_info->tdm_disable)) {
 		pr_err("%s: could not get tdm_disable pinstate\n", __func__);
-		goto err;
 	}
 	pinctrl_info->tdm_active = pinctrl_lookup_state(pinctrl,
 						"quat-tdm-active");
 	if (IS_ERR(pinctrl_info->tdm_active)) {
 		pr_err("%s: could not get tdm_active pinstate\n",
 			__func__);
-		goto err;
 	}
 	/* Reset the TLMM pins to a default state */
 	ret = pinctrl_select_state(pinctrl_info->pinctrl,
@@ -5105,6 +5109,17 @@ static struct snd_soc_dai_link_component cs35l41_codec_components[] = {
 		.dai_name = "cs35l41-pcm",
 	},
 	{ NULL }
+};
+
+static struct snd_soc_codec_conf cs35l41_codec_conf[] = {
+	{
+		.dev_name = "spi1.0",
+		.name_prefix = "SPK",
+	},
+	{
+		.dev_name = "spi1.1",
+		.name_prefix = "RCV",
+	}
 };
 
 static struct snd_soc_ops msm_mi2s_be_ops = {
@@ -6646,6 +6661,8 @@ err:
 struct snd_soc_card snd_soc_card_tavil_msm = {
 	.name		= "sdm845-tavil-snd-card",
 	.late_probe	= msm_snd_card_tavil_late_probe,
+	.codec_conf = cs35l41_codec_conf,
+	.num_configs = ARRAY_SIZE(cs35l41_codec_conf),
 };
 
 static int msm_populate_dai_link_component_of_node(

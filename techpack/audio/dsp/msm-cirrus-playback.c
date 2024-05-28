@@ -65,16 +65,6 @@ static int cirrus_ff_port = AFE_PORT_ID_QUATERNARY_MI2S_RX;
 static int crus_sp_usecase_dt_count;
 static const char *crus_sp_usecase_dt_text[MAX_TUNING_CONFIGS];
 
-static unsigned char count_config;
-
-static bool msm_crus_is_cirrus_afe_topology(void)
-{
-	if (afe_get_topology(cirrus_ff_port) == CIRRUS_RX_TOPOLOGY
-		&& afe_get_topology(cirrus_fb_port) == CIRRUS_TX_TOPOLOGY)
-		return true;
-	return false;
-}
-
 static struct afe_custom_crus_get_config_t *crus_alloc_afe_get_header(int length,
 		int port, int module, int param)
 {
@@ -175,11 +165,6 @@ static int crus_afe_get_param(int port, int module, int param, int length,
 	pr_debug("port = 0x%x module = 0x%x param = 0x%x length = %d\n",
 		port, module, param, length);
 
-	if (!msm_crus_is_cirrus_afe_topology()) {
-		pr_warn("afe port is not cirrus's topology");
-		return -EPERM;
-	}
-
 	config = crus_alloc_afe_get_header(length, port, module, param);
 	if (config == NULL) {
 		pr_err("Memory allocation failed!\n");
@@ -242,11 +227,6 @@ static int crus_afe_set_param(int port, int module, int param, int length,
 
 	pr_info("port = 0x%x module = 0x%x param = 0x%x length = %d\n",
 		port, module, param, length);
-
-	if (!msm_crus_is_cirrus_afe_topology()) {
-		pr_warn("afe port is not cirrus's topology");
-		return -EPERM;
-	}
 
 	config = crus_alloc_afe_set_header(length, port, module, param);
 	if (config == NULL) {
@@ -574,7 +554,7 @@ static const struct snd_kcontrol_new crus_mixer_controls[] = {
 		msm_routing_cirrus_fbport_get, msm_routing_cirrus_fbport_put),
 	SOC_ENUM_EXT("Cirrus SP", crus_en_enum[0],
 		msm_routing_crus_sp_enable_get, msm_routing_crus_sp_enable),
-	SOC_ENUM_EXT("Cirrus SP Usecase", crus_sp_usecase_enum[0],
+	SOC_ENUM_EXT("Cirrus SP Usecase Config", crus_sp_usecase_enum[0],
 		msm_routing_crus_sp_usecase_get, msm_routing_crus_sp_usecase),
 	SOC_ENUM_EXT("Cirrus SP Channel Swap", crus_chan_swap_enum[0],
 		msm_routing_crus_chan_swap_get, msm_routing_crus_chan_swap),
@@ -844,10 +824,10 @@ static int crus_sp_release(struct inode *inode, struct file *f)
 }
 
 static int msm_crus_read_calibration(void) {
-	char cal_str[256];
+	char cal_str[64];
 	int ret;
 
-	ret = mz_private_read(cal_str, 256, 0x11c00);
+	ret = mz_private_read(cal_str, 64, 0x11c00);
 	if (ret < 0) {
 		pr_err("%s: reading calibration data has failed\n", __func__);
 		return -EINVAL;
