@@ -3906,6 +3906,9 @@ static const struct snd_kcontrol_new mi2s_config_controls[] = {
 };
 
 static const struct snd_kcontrol_new mi2s_vi_feed_controls[] = {
+	SOC_ENUM_EXT("QUAT MI2S VI MONO", mi2s_config_enum[1],
+		     msm_dai_q6_mi2s_vi_feed_mono_get,
+		     msm_dai_q6_mi2s_vi_feed_mono_put),
 	SOC_ENUM_EXT("INT5 MI2S VI MONO", mi2s_config_enum[1],
 		     msm_dai_q6_mi2s_vi_feed_mono_get,
 		     msm_dai_q6_mi2s_vi_feed_mono_put),
@@ -3981,6 +3984,8 @@ static int msm_dai_q6_dai_mi2s_probe(struct snd_soc_dai *dai)
 
 	if (dai->id == MSM_INT5_MI2S)
 		vi_feed_ctrl = &mi2s_vi_feed_controls[0];
+	else if (dai->id == MSM_QUAT_MI2S)
+		vi_feed_ctrl = &mi2s_vi_feed_controls[1];
 
 	if (vi_feed_ctrl) {
 		rc = snd_ctl_add(dai->component->card->snd_card,
