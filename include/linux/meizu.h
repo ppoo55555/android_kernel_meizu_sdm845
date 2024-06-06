@@ -18,7 +18,26 @@
 #ifndef __MEIZU_H
 #define __MEIZU_H
 
+enum mz_device_model {
+    MZ_DEVICE_UNKNOWN = -1,
+    MZ_DEVICE_16TH,      // Meizu 16th
+    MZ_DEVICE_16THPLUS,  // Meizu 16th Plus
+    MZ_DEVICE_ZERO,      // Meizu Zero
+};
+
+struct mz_device_info {
+    // Software version (sw_version)
+    char sw_version[16];
+    // Hardware version (hw_version)
+    int hw_version;
+    // Device model
+    enum mz_device_model model;
+};
+
 int mz_part_read(const char *part, char *buf, size_t count, loff_t offset);
+
+int mz_get_hw_version(void);
+enum mz_device_model mz_get_model(void);
 
 /* Read data from 'reserved' partition */
 static inline int mz_reserved_read(char *buf, size_t count, loff_t offset)
@@ -31,6 +50,25 @@ static inline int mz_reserved_read(char *buf, size_t count, loff_t offset)
 static inline int mz_private_read(char *buf, size_t count, loff_t offset)
 {
     return mz_part_read("private", buf, count, offset);
+}
+
+/*
+ * Convenience methods
+ */
+
+static inline bool mz_is_16th(void)
+{
+    return mz_get_model() == MZ_DEVICE_16TH;
+}
+
+static inline bool mz_is_16th_plus(void)
+{
+    return mz_get_model() == MZ_DEVICE_16THPLUS;
+}
+
+static inline bool mz_is_zero(void)
+{
+    return mz_get_model() == MZ_DEVICE_ZERO;
 }
 
 #endif
