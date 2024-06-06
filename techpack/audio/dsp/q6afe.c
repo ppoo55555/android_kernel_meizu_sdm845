@@ -362,6 +362,10 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 			return -EINVAL;
 		}
 
+		if (crus_afe_callback(data->payload,
+					   data->payload_size) == 0)
+			return 0;
+
 		if (rtac_make_afe_callback(data->payload,
 					   data->payload_size))
 			return 0;
@@ -375,11 +379,7 @@ static int32_t afe_callback(struct apr_client_data *data, void *priv)
 		if (payload[2] == AFE_PARAM_ID_DEV_TIMING_STATS) {
 			av_dev_drift_afe_cb_handler(data->payload,
 						    data->payload_size);
-		} else {
-			if (!crus_afe_callback(data->payload,
-					       data->payload_size))
-				return 0;
-			
+		} else {			
 			if (sp_make_afe_callback(data->payload,
 						 data->payload_size))
 				return -EINVAL;
@@ -3643,6 +3643,8 @@ static int __afe_port_start(u16 port_id, union afe_port_config *afe_config,
 		goto fail_cmd;
 	}
 	ret = afe_send_cmd_port_start(port_id);
+	if (!ret)
+		crus_sp_afe_port_start(port_id);
 
 fail_cmd:
 	mutex_unlock(&this_afe.afe_cmd_lock);
@@ -6044,6 +6046,7 @@ int afe_close(int port_id)
 		this_afe.afe_sample_rates[port_index] = 0;
 		this_afe.topology[port_index] = 0;
 		this_afe.dev_acdb_id[port_index] = 0;
+		crus_sp_afe_port_close(port_id);
 	} else {
 		pr_err("%s: port %d\n", __func__, port_index);
 		ret = -EINVAL;

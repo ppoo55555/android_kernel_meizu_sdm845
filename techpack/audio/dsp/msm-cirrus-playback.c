@@ -27,9 +27,6 @@
 #define CRUS_TX_CONFIG "crus_sp_config_tx.txt"
 #define CRUS_RX_CONFIG "crus_sp_config_rx.txt"
 
-#define CIRRUS_RX_TOPOLOGY 0x10000CCC
-#define CIRRUS_TX_TOPOLOGY 0x10001CCC
-
 #define CRUS_PARAM_TEMP_MAX_LENGTH 384
 #define CRUS_RX_GET_TEMP_BUFFER_SIZE 384
 
@@ -59,6 +56,7 @@ static int cirrus_fb_port_ctl;
 static int cirrus_fb_ext_conf_sel;
 static int cirrus_ff_chan_swap_sel;
 static int cirrus_ff_chan_swap_dur = 48;
+static int cirrus_sp_ff_port_started;
 static int cirrus_fb_port = AFE_PORT_ID_QUATERNARY_MI2S_TX;
 static int cirrus_ff_port = AFE_PORT_ID_QUATERNARY_MI2S_RX;
 
@@ -310,6 +308,28 @@ static int msm_crus_send_usecase(int usecase)
 	return 0;
 }
 
+int msm_crus_send_chan_swap(int config)
+{
+	struct crus_dual_data_t data;
+
+	switch (config) {
+	case 0: /* L/R */
+		data.data1 = 1;
+		break;
+	case 1: /* R/L */
+		data.data1 = 2;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	data.data2 = cirrus_ff_chan_swap_dur;
+
+	crus_afe_set_param(cirrus_ff_port, CIRRUS_SP,
+			   CRUS_PARAM_RX_CHANNEL_SWAP,
+			   sizeof(struct crus_dual_data_t), &data);
+}
+
 int msm_routing_cirrus_fbport_get(struct snd_kcontrol *kcontrol,
 					struct snd_ctl_elem_value *ucontrol)
 {
@@ -458,31 +478,13 @@ static int msm_routing_crus_sp_usecase_get(struct snd_kcontrol *kcontrol,
 static int msm_routing_crus_chan_swap(struct snd_kcontrol *kcontrol,
 				      struct snd_ctl_elem_value *ucontrol)
 {
-	struct crus_dual_data_t data;
 	const int crus_set = ucontrol->value.integer.value[0];
 
 	pr_debug("Starting Cirrus SP Channel Swap function call %d\n",
 		 crus_set);
 
-	switch (crus_set) {
-	case 0: /* L/R */
-		data.data1 = 1;
-		break;
-	case 1: /* R/L */
-		data.data1 = 2;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	data.data2 = cirrus_ff_chan_swap_dur;
-
-	crus_afe_set_param(cirrus_ff_port, CIRRUS_SP,
-			   CRUS_PARAM_RX_CHANNEL_SWAP,
-			   sizeof(struct crus_dual_data_t), &data);
-
 	cirrus_ff_chan_swap_sel = crus_set;
-
+	msm_crus_send_chan_swap(cirrus_ff_chan_swap_sel);
 	return 0;
 }
 
@@ -719,6 +721,7 @@ static long crus_sp_shared_ioctl(struct file *f, unsigned int cmd,
 
 		memcpy(&crus_sp_cal_rslt, io_data, bufsize);
 		break;
+	
 	default:
 		pr_err("%s: Invalid IOCTL, command = %d!\n", __func__, cmd);
 		result = -EINVAL;
@@ -823,24 +826,14 @@ static int crus_sp_release(struct inode *inode, struct file *f)
 	return result;
 }
 
-static int msm_crus_read_calibration(void) {
-	char cal_str[64];
-	int ret;
+int msm_crus_apply_calibration(struct wm_adsp *dsp) {
+	crus_sp_cal_rslt.status_l = dsp->cal[0].cal_status;
+	crus_sp_cal_rslt.checksum_l = dsp->cal[0].cal_chksum;
+	crus_sp_cal_rslt.z_l = dsp->cal[0].cal_z;
 
-	ret = mz_private_read(cal_str, 64, 0x11c00);
-	if (ret < 0) {
-		pr_err("%s: reading calibration data has failed\n", __func__);
-		return -EINVAL;
-	}
-
-	ret = sscanf(cal_str, "%d %d %d %d %d %d",
-		crus_sp_cal_rslt.status_l, crus_sp_cal_rslt.checksum_l,
-		crus_sp_cal_rslt.z_l, crus_sp_cal_rslt.status_r,
-		crus_sp_cal_rslt.checksum_r, crus_sp_cal_rslt.z_r);
-	if (ret != 6) {
-		pr_err("%s: parsing calibration data has failed\n", __func__);
-		return -EINVAL;
-	}
+	crus_sp_cal_rslt.status_r = dsp->cal[1].cal_status;
+	crus_sp_cal_rslt.checksum_r = dsp->cal[1].cal_chksum;
+	crus_sp_cal_rslt.z_r = dsp->cal[1].cal_z;
 
 	pr_info("%s: left [%d, %d, %d], right [%d %d %d]\n", __func__,
 		crus_sp_cal_rslt.status_l, crus_sp_cal_rslt.checksum_l,
@@ -848,13 +841,39 @@ static int msm_crus_read_calibration(void) {
 		crus_sp_cal_rslt.checksum_r, crus_sp_cal_rslt.z_r);
 	return 0;
 }
+EXPORT_SYMBOL(msm_crus_apply_calibration);
 
-int msm_crus_calibrate(void)
+int crus_sp_afe_port_start(int port_id)
 {
-	// Just reading calibration is enough - it'll be applied with the usecase.
-	return msm_crus_read_calibration();
+  	if (cirrus_ff_port != port_id)
+		return 0;
+
+    mutex_lock(&crus_sp_lock);
+
+    cirrus_sp_ff_port_started = true;
+    if (cirrus_sp_en) {
+      msleep(2);
+      msm_crus_send_usecase(cirrus_sp_usecase);
+      msleep(5);
+      msm_crus_send_chan_swap(cirrus_ff_chan_swap_sel);
+    }
+
+	mutex_unlock(&crus_sp_lock);
+  	return 0;
 }
-EXPORT_SYMBOL(msm_crus_calibrate);
+EXPORT_SYMBOL(crus_sp_afe_port_start);
+
+int crus_sp_afe_port_close(int port_id)
+{
+  	if (cirrus_ff_port != port_id)
+		return 0;
+
+    mutex_lock(&crus_sp_lock);
+    cirrus_sp_ff_port_started = false;
+	mutex_unlock(&crus_sp_lock);
+  	return 0;
+}
+EXPORT_SYMBOL(crus_sp_afe_port_close);
 
 static int msm_cirrus_playback_probe(struct platform_device *pdev)
 {

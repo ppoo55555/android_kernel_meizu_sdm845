@@ -24,6 +24,8 @@
 #include <dsp/q6audio-v2.h>
 #include <uapi/sound/msm-cirrus-playback.h>
 
+#include "../../asoc/codecs/cs35l41/wm_adsp.h"
+
 struct afe_custom_crus_set_config_t {
 	struct apr_hdr hdr;
 	struct afe_port_cmd_set_param_v2 param;
@@ -150,6 +152,8 @@ void msm_crus_pb_add_controls(struct snd_soc_platform *platform);
 int __init crus_sp_init(void);
 void __exit crus_sp_exit(void);
 
-int msm_crus_calibrate(void);
+int msm_crus_apply_calibration(struct wm_adsp *dsp);
+int crus_sp_afe_port_start(int port_id);
+int crus_sp_afe_port_close(int port_id);
 
 #endif /* _MSM_CIRRUS_PLAYBACK_H */
