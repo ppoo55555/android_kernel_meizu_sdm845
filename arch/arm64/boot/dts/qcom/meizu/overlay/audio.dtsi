@@ -125,3 +125,10 @@
 		usecase-names = "None", "Music", "Voice", "Handsfree";
 	};
 };
+
+&dai_mi2s3 {
+	qcom,msm-mi2s-rx-lines = <4>;
+	qcom,msm-mi2s-tx-lines = <3>;
+	qcom,msm-mi2s-rx-lines-b2 = <1>;
+	qcom,msm-mi2s-tx-lines-b2 = <2>;
+};
