@@ -2647,6 +2647,9 @@ static int aw869x_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *
 
     pr_info("%s enter\n", __func__);
 
+    if (mz_is_16th() && mz_get_hw_version() < 5)
+        return -EINVAL;
+
     if (!i2c_check_functionality(i2c->adapter, I2C_FUNC_I2C)) {
         dev_err(&i2c->dev, "check_functionality failed\n");
         return -EIO;
