@@ -9,12 +9,14 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+#include <dsp/msm-cirrus-playback.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
 #include <linux/list.h>
+#include <linux/meizu.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -482,12 +484,14 @@ static void wm_adsp_buf_free(struct list_head *list)
 #define WM_ADSP_FW_ASR      7
 #define WM_ADSP_FW_TRACE    8
 #define WM_ADSP_FW_SPK_PROT 9
-#define WM_ADSP_FW_DIAG     10
-#define WM_ADSP_FW_CALIB    11
+#define WM_ADSP_FW_SPK_PROT_LEFT 10
+#define WM_ADSP_FW_SPK_PROT_RIGHT 11
+#define WM_ADSP_FW_SPK_PROT_CAL 12
+#define WM_ADSP_FW_DIAG     13
+#define WM_ADSP_FW_CALIB    14
 
-#define WM_ADSP_NUM_FW      12
+#define WM_ADSP_NUM_FW      15
 
-#define AMBIENT_DEFAULT     30
 #define CAL_R_DEFAULT       10800
 #define CAL_STATUS_DEFAULT  1
 
@@ -502,6 +506,9 @@ static const char *wm_adsp_fw_text[WM_ADSP_NUM_FW] = {
 	[WM_ADSP_FW_ASR] =      "ASR Assist",
 	[WM_ADSP_FW_TRACE] =    "Dbg Trace",
 	[WM_ADSP_FW_SPK_PROT] = "Protection",
+	[WM_ADSP_FW_SPK_PROT_LEFT] = "Protection Left",
+	[WM_ADSP_FW_SPK_PROT_RIGHT] = "Protection Right",
+	[WM_ADSP_FW_SPK_PROT_CAL] = "Protection Cal",
 	[WM_ADSP_FW_DIAG] =     "Diag",
 	[WM_ADSP_FW_CALIB] =     "Calib",
 };
@@ -695,6 +702,9 @@ static const struct {
 		.caps = trace_caps,
 	},
 	[WM_ADSP_FW_SPK_PROT] = { .file = "spk-prot" },
+	[WM_ADSP_FW_SPK_PROT_LEFT] = { .file = "spk-prot-left" },
+	[WM_ADSP_FW_SPK_PROT_RIGHT] = { .file = "spk-prot-right" },
+	[WM_ADSP_FW_SPK_PROT_CAL] = { .file = "spk-prot-cal" },
 	[WM_ADSP_FW_DIAG] =     { .file = "diag" },
 	[WM_ADSP_FW_CALIB] =     { .file = "calib" },
 };
@@ -958,7 +968,7 @@ static int wm_adsp_cal_get(struct snd_kcontrol *kcontrol,
 	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wm_adsp *dsp = snd_soc_codec_get_drvdata(codec);
 
-	ucontrol->value.enumerated.item[0] = dsp->cal_z;
+	ucontrol->value.enumerated.item[0] = dsp->cal[dsp->reg].cal_z;
 
 	return 0;
 }
@@ -969,34 +979,11 @@ static int wm_adsp_cal_put(struct snd_kcontrol *kcontrol,
 	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wm_adsp *dsp = snd_soc_codec_get_drvdata(codec);
 
-	dsp->cal_z = ucontrol->value.enumerated.item[0];
-	dsp->cal_chksum = dsp->cal_z + CAL_STATUS_DEFAULT;
+	dsp->cal[dsp->reg].cal_z = ucontrol->value.enumerated.item[0];
+	dsp->cal[dsp->reg].cal_chksum =
+		dsp->cal[dsp->reg].cal_z + CAL_STATUS_DEFAULT;
 
-	dev_info(codec->dev, "cal_z = %d\n", dsp->cal_z);
-
-	return 0;
-}
-
-static int wm_adsp_ambient_get(struct snd_kcontrol *kcontrol,
-				    struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
-	struct wm_adsp *dsp = snd_soc_codec_get_drvdata(codec);
-
-	ucontrol->value.enumerated.item[0] = dsp->ambient;
-
-	return 0;
-}
-
-static int wm_adsp_ambient_put(struct snd_kcontrol *kcontrol,
-				    struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
-	struct wm_adsp *dsp = snd_soc_codec_get_drvdata(codec);
-
-	dsp->ambient = ucontrol->value.enumerated.item[0];
-
-	dev_info(codec->dev, "ambient = %d\n", dsp->ambient);
+	dev_info(codec->dev, "cal_z = %d\n", dsp->cal[dsp->reg].cal_z);
 
 	return 0;
 }
@@ -1007,7 +994,7 @@ static int wm_adsp_cal_status_get(struct snd_kcontrol *kcontrol,
 	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wm_adsp *dsp = snd_soc_codec_get_drvdata(codec);
 
-	ucontrol->value.enumerated.item[0] = dsp->cal_status;
+	ucontrol->value.enumerated.item[0] = dsp->cal[dsp->reg].cal_status;
 
 	return 0;
 }
@@ -1018,9 +1005,9 @@ static int wm_adsp_cal_status_put(struct snd_kcontrol *kcontrol,
 	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wm_adsp *dsp = snd_soc_codec_get_drvdata(codec);
 
-	dsp->cal_status = ucontrol->value.enumerated.item[0];
+	dsp->cal[dsp->reg].cal_status = ucontrol->value.enumerated.item[0];
 
-	dev_info(codec->dev, "cal_status = %d\n", dsp->cal_status);
+	dev_info(codec->dev, "cal_status = %d\n", dsp->cal[dsp->reg].cal_status);
 
 	return 0;
 }
@@ -1031,7 +1018,7 @@ static int wm_adsp_cal_chksum_get(struct snd_kcontrol *kcontrol,
 	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wm_adsp *dsp = snd_soc_codec_get_drvdata(codec);
 
-	ucontrol->value.enumerated.item[0] = dsp->cal_chksum;
+	ucontrol->value.enumerated.item[0] = dsp->cal[dsp->reg].cal_chksum;
 
 	return 0;
 }
@@ -1042,9 +1029,9 @@ static int wm_adsp_cal_chksum_put(struct snd_kcontrol *kcontrol,
 	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
 	struct wm_adsp *dsp = snd_soc_codec_get_drvdata(codec);
 
-	dsp->cal_chksum = ucontrol->value.enumerated.item[0];
+	dsp->cal[dsp->reg].cal_chksum = ucontrol->value.enumerated.item[0];
 
-	dev_info(codec->dev, "cal_chksum = %d\n", dsp->cal_chksum);
+	dev_info(codec->dev, "cal_chksum = %d\n", dsp->cal[dsp->reg].cal_chksum);
 
 	return 0;
 }
@@ -1080,8 +1067,6 @@ const struct snd_kcontrol_new wm_adsp_cal_controls[] = {
 	/* In Halo DSP, values are 24-bit */
 	SOC_SINGLE_EXT("DSP Set CAL_Z", SND_SOC_NOPM, 0, 0xFFFFFF, 0,
 		       wm_adsp_cal_get, wm_adsp_cal_put),
-	SOC_SINGLE_EXT("DSP Set AMBIENT", SND_SOC_NOPM, 0, 0xFFFFFF, 0,
-                wm_adsp_ambient_get, wm_adsp_ambient_put),
 	SOC_SINGLE_EXT("DSP Set CAL_STATUS", SND_SOC_NOPM, 0, 0xFFFFFF, 0,
 		       wm_adsp_cal_status_get, wm_adsp_cal_status_put),
 	SOC_SINGLE_EXT("DSP Set CAL_CHKSUM", SND_SOC_NOPM, 0, 0xFFFFFF, 0,
@@ -3773,13 +3758,11 @@ int wm_halo_event(struct snd_soc_dapm_widget *w, struct snd_kcontrol *kcontrol,
 			ret = -EIO;
 			goto err;
 		}
-		wm_halo_apply_calibration(w);
+
 		/* Sync set controls */
 		ret = wm_coeff_sync_controls(dsp);
 		if (ret != 0)
 			goto err;
-
-		//wm_halo_apply_calibration(w);
 
 		adsp_dbg(dsp, "Setting RX rates.\n");
 		ret = wm_halo_set_rate_block(dsp, HALO_SAMPLE_RATE_RX1,
@@ -3830,6 +3813,7 @@ int wm_halo_event(struct snd_soc_dapm_widget *w, struct snd_kcontrol *kcontrol,
 
 		mutex_unlock(&dsp->pwr_lock);
 
+		wm_halo_apply_calibration(w);
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
 		/* Tell the firmware to cleanup */
@@ -3955,24 +3939,37 @@ static int wm_halo_apply_calibration(struct snd_soc_dapm_widget *w)
 	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
 	struct wm_adsp *dsps = snd_soc_codec_get_drvdata(codec);
 	struct wm_adsp *dsp = &dsps[w->shift];
+	struct wm_adsp_calibration cal;
+	int ret;
 
-	if (dsp->fw == WM_ADSP_FW_DIAG) {
-		adsp_warn(dsp, "Set ambient %d, only for Diagnostic\n", dsp->ambient);
-		wm_adsp_cal_ctl_put(dsp, "DSP1X Diag cd CAL_AMBIENT", dsp->ambient);
-		return 0;
+	ret = wait_for_completion_timeout(&dsp->calibration_loaded,
+								msecs_to_jiffies(1000));
+	if (!ret) {
+		adsp_err(dsp, "Calibration has not been loaded!\n");
+		return -EINVAL;
 	}
 
-	if (dsp->fw == WM_ADSP_FW_SPK_PROT) {
-		wm_adsp_cal_ctl_put(dsp, "DSP1X Protection cd CAL_R", dsp->cal_z);
-		wm_adsp_cal_ctl_put(dsp, "DSP1X Protection cd CAL_STATUS", dsp->cal_status);
-		wm_adsp_cal_ctl_put(dsp, "DSP1X Protection cd CAL_CHECKSUM", dsp->cal_chksum);
-		wm_adsp_cal_ctl_get(dsp, "DSP1X Protection cd CAL_R");
-		wm_adsp_cal_ctl_get(dsp, "DSP1X Protection cd CAL_STATUS");
-		wm_adsp_cal_ctl_get(dsp, "DSP1X Protection cd CAL_CHECKSUM");
-		return 0;
+	switch (dsp->fw) {
+		case WM_ADSP_FW_SPK_PROT:
+		case WM_ADSP_FW_SPK_PROT_LEFT:
+		case WM_ADSP_FW_SPK_PROT_RIGHT:
+			cal = dsp->cal[dsp->reg];
+
+			wm_adsp_cal_ctl_put(dsp,
+				"DSP1X Protection cd CAL_R", cal.cal_z);
+			wm_adsp_cal_ctl_put(dsp,
+				"DSP1X Protection cd CAL_STATUS", cal.cal_status);
+			wm_adsp_cal_ctl_put(dsp,
+				"DSP1X Protection cd CAL_CHECKSUM", cal.cal_chksum);
+			wm_adsp_cal_ctl_get(dsp, "DSP1X Protection cd CAL_R");
+			wm_adsp_cal_ctl_get(dsp, "DSP1X Protection cd CAL_STATUS");
+			wm_adsp_cal_ctl_get(dsp, "DSP1X Protection cd CAL_CHECKSUM");
+			break;
+		default:
+			break;
 	}
 
-	adsp_warn(dsp, "Do thing'\n");
+	adsp_info(dsp, "Calibration has been applied\n");
 	return 0;
 }
 
@@ -4039,21 +4036,62 @@ int wm_adsp2_init(struct wm_adsp *dsp)
 }
 EXPORT_SYMBOL_GPL(wm_adsp2_init);
 
+void wm_halo_read_calibration_work(struct work_struct *work)
+{
+	struct wm_adsp *dsp =
+		container_of(work, struct wm_adsp, calibration_work.work);
+	
+	int ret, attempts_left;
+	char cal[64];
+
+	for (attempts_left = 5; attempts_left; attempts_left--) {
+		ret = mz_private_read(cal, sizeof(cal), MZ_WM_ADSP_CALIBRATION_OFFSET);
+		if (ret < 0) {
+			dev_err(dsp->dev, "Failed to read DSP calibration: %d\n", ret);
+			continue;
+		}
+
+		ret = sscanf(cal, "%d %d %d %d %d %d",
+			&dsp->cal[0].cal_status, &dsp->cal[0].cal_chksum,
+			&dsp->cal[0].cal_z, 	 &dsp->cal[1].cal_status,
+			&dsp->cal[1].cal_chksum, &dsp->cal[1].cal_z);
+		if (ret != 6) {
+			pr_err("%s: parsing calibration data has failed (%d): %s\n", 
+				__func__, ret, cal);
+			continue;
+		}
+
+		ret = msm_crus_apply_calibration(dsp);
+		if (ret < 0)
+			dev_err(dsp->dev, "CSPL didn't apply calibration: %d\n", ret);
+
+		pr_info("%s: 0 (main, left) [%d, %d, %d], 1 (sub, right) [%d %d %d]\n", __func__,
+				dsp->cal[0].cal_status, dsp->cal[0].cal_chksum,
+				dsp->cal[0].cal_z, dsp->cal[1].cal_status,
+				dsp->cal[1].cal_chksum, dsp->cal[1].cal_z);
+		complete(&dsp->calibration_loaded);
+		return;
+	}
+
+	pr_err("%s: Failed to read calibration\n", __func__);
+}
+
 int wm_halo_init(struct wm_adsp *dsp)
 {
 	INIT_LIST_HEAD(&dsp->alg_regions);
 	INIT_LIST_HEAD(&dsp->ctl_list);
 	INIT_WORK(&dsp->boot_work, wm_halo_boot_work);
+	INIT_DELAYED_WORK(&dsp->calibration_work, wm_halo_read_calibration_work);
+	init_completion(&dsp->calibration_loaded);
 
 	mutex_init(&dsp->pwr_lock);
 
 	dsp->rx_rate_cache = kcalloc(dsp->n_rx_rates, sizeof(u8), GFP_KERNEL);
 	dsp->tx_rate_cache = kcalloc(dsp->n_tx_rates, sizeof(u8), GFP_KERNEL);
+	
+	schedule_delayed_work(&dsp->calibration_work,
+						  msecs_to_jiffies(1000));
 
-	dsp->ambient = AMBIENT_DEFAULT;
-	dsp->cal_z = CAL_R_DEFAULT;
-	dsp->cal_status = CAL_STATUS_DEFAULT;
-	dsp->cal_chksum = CAL_R_DEFAULT + CAL_STATUS_DEFAULT;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(wm_halo_init);

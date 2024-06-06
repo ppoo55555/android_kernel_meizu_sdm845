@@ -45,6 +45,7 @@ struct cs35l41_platform_data {
 	int dout_hiz;
 	int dsp1_rx1_source;
 	int dsp1_rx2_source;
+	int reg;
 	struct irq_cfg irq_config1;
 	struct irq_cfg irq_config2;
 	struct classh_cfg classh_config;
@@ -63,17 +64,19 @@ struct cs35l41_private {
 	int extclk_freq;
 	int extclk_cfg;
 	int sclk;
-	unsigned int cspl_cmd;
+	int latest_freq;
+
 	bool dspa_mode;
 	bool i2s_mode;
 	bool swire_mode;
 	bool halo_booted;
 	bool bus_spi;
+
 	/* GPIO for /RST */
 	int reset_gpio;
+
 	struct completion global_pup_done;
 	struct completion global_pdn_done;
-	struct completion mbox_cmd;
 };
 
 int cs35l41_probe(struct cs35l41_private *cs35l41,

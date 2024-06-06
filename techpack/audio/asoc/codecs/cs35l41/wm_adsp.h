@@ -13,6 +13,8 @@
 #ifndef __WM_ADSP_H
 #define __WM_ADSP_H
 
+#include <linux/completion.h>
+
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
 #include <sound/compress_driver.h>
@@ -55,18 +57,23 @@ struct wm_adsp_alg_region {
 struct wm_adsp_compr;
 struct wm_adsp_compr_buf;
 
+#define MZ_WM_ADSP_CALIBRATION_OFFSET 0x11c00
+struct wm_adsp_calibration {
+	int cal_z;
+	int cal_status;
+	int cal_chksum;
+};
+
 struct wm_adsp {
 	const char *part;
 	int rev;
 	int num;
+	int reg;
 	int type;
 	struct device *dev;
 	struct regmap *regmap;
 	struct snd_soc_codec *codec;
-	int cal_z;
-	int ambient;
-	int cal_status;
-	int cal_chksum;
+	struct wm_adsp_calibration cal[2];
 	int base;
 	int base_sysinfo;
 	int sysclk_reg;
@@ -106,6 +113,9 @@ struct wm_adsp {
 
 	u8 *rx_rate_cache;
 	u8 *tx_rate_cache;
+
+	struct completion calibration_loaded;
+	struct delayed_work calibration_work;
 
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debugfs_root;
