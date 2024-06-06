@@ -80,7 +80,6 @@
 #define TDM_SLOT_WIDTH_BITS	32
 
 static atomic_t cs35l41_mclk_rsc_ref;
-static atomic_t cs35l41_calibrated = ATOMIC_INIT(0);
 
 enum {
 	SLIM_RX_0 = 0,
@@ -159,19 +158,14 @@ struct msm_wsa881x_dev_info {
 enum pinctrl_pin_state {
 	STATE_DISABLE = 0, /* All pins are in sleep state */
 	STATE_MI2S_ACTIVE,  /* IS2 = active, TDM = sleep */
-	STATE_TDM_ACTIVE,  /* IS2 = sleep, TDM = active */
 };
 
 struct msm_pinctrl_info {
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *mi2s_disable;
-	struct pinctrl_state *tdm_disable;
 	struct pinctrl_state *mi2s_active;
-	struct pinctrl_state *tdm_active;
 	enum pinctrl_pin_state curr_state;
 };
-
-static atomic_t pinctrl_ref_count;
 
 struct msm_asoc_mach_data {
 	u32 mclk_freq;
@@ -4506,23 +4500,10 @@ static int msm_set_pinctrl(struct msm_pinctrl_info *pinctrl_info,
 		goto err;
 	}
 
-	curr_state = pinctrl_info->curr_state;
-	pinctrl_info->curr_state = new_state;
 	pr_debug("%s: curr_state = %s new_state = %s\n", __func__,
-		 pin_states[curr_state], pin_states[pinctrl_info->curr_state]);
+		 pin_states[pinctrl_info->curr_state], pin_states[new_state]);
 
-	if (curr_state == pinctrl_info->curr_state) {
-		pr_debug("%s: Already in same state\n", __func__);
-		goto err;
-	}
-
-	if (curr_state != STATE_DISABLE &&
-		pinctrl_info->curr_state != STATE_DISABLE) {
-		pr_debug("%s: state already active cannot switch\n", __func__);
-		ret = -EIO;
-		goto err;
-	}
-
+	pinctrl_info->curr_state = new_state;
 	switch (pinctrl_info->curr_state) {
 	case STATE_MI2S_ACTIVE:
 		ret = pinctrl_select_state(pinctrl_info->pinctrl,
@@ -4533,31 +4514,11 @@ static int msm_set_pinctrl(struct msm_pinctrl_info *pinctrl_info,
 			ret = -EIO;
 			goto err;
 		}
-		break;
-	case STATE_TDM_ACTIVE:
-		if (IS_ERR(pinctrl_info->tdm_disable)) {
-			pr_err("%s: TDM pins are invalid\n", __func__);
-			ret = -EINVAL;
-			goto err;
-		}
-
-		ret = pinctrl_select_state(pinctrl_info->pinctrl,
-					pinctrl_info->tdm_active);
-		if (ret) {
-			pr_err("%s: TDM state select failed with %d\n",
-				__func__, ret);
-			ret = -EIO;
-			goto err;
-		}
+		pr_info("%s: mi2s pins enabled\n", __func__);
 		break;
 	case STATE_DISABLE:
-		if (curr_state == STATE_MI2S_ACTIVE) {
-			ret = pinctrl_select_state(pinctrl_info->pinctrl,
-					pinctrl_info->mi2s_disable);
-		} else if (!IS_ERR(pinctrl_info->tdm_disable)) {
-			ret = pinctrl_select_state(pinctrl_info->pinctrl,
-					pinctrl_info->tdm_disable);
-		}
+		ret = pinctrl_select_state(pinctrl_info->pinctrl,
+				pinctrl_info->mi2s_disable);
 		if (ret) {
 			pr_err("%s:  state disable failed with %d\n",
 				__func__, ret);
@@ -4621,18 +4582,6 @@ static int msm_get_pinctrl(struct platform_device *pdev)
 		pr_err("%s: could not get mi2s_active pinstate\n", __func__);
 		goto err;
 	}
-	pinctrl_info->tdm_disable = pinctrl_lookup_state(pinctrl,
-						"quat-tdm-sleep");
-	if (IS_ERR(pinctrl_info->tdm_disable)) {
-		pr_err("%s: could not get tdm_disable pinstate\n", __func__);
-	}
-	pinctrl_info->tdm_active = pinctrl_lookup_state(pinctrl,
-						"quat-tdm-active");
-	if (IS_ERR(pinctrl_info->tdm_active)) {
-		pr_err("%s: could not get tdm_active pinstate\n",
-			__func__);
-	}
-	/* Reset the TLMM pins to a default state */
 	ret = pinctrl_select_state(pinctrl_info->pinctrl,
 					pinctrl_info->mi2s_disable);
 	if (ret != 0) {
@@ -4642,7 +4591,6 @@ static int msm_get_pinctrl(struct platform_device *pdev)
 		goto err;
 	}
 	pinctrl_info->curr_state = STATE_DISABLE;
-	atomic_set(&pinctrl_ref_count, 0);
 
 	return 0;
 
@@ -4801,58 +4749,8 @@ end:
 	return ret;
 }
 
-static int sdm845_tdm_snd_startup(struct snd_pcm_substream *substream)
-{
-	int ret = 0;
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
-	struct snd_soc_card *card = rtd->card;
-	struct msm_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
-	struct msm_pinctrl_info *pinctrl_info = &pdata->pinctrl_info;
-
-	/* currently only supporting TDM_RX_0/TDM_RX_1 and TDM_TX_0 */
-	if ((cpu_dai->id == AFE_PORT_ID_QUATERNARY_TDM_RX) ||
-		(cpu_dai->id == AFE_PORT_ID_QUATERNARY_TDM_TX) ||
-		(cpu_dai->id == AFE_PORT_ID_QUATERNARY_TDM_RX_1)) {
-		if (atomic_read(&pinctrl_ref_count) == 0) {
-			ret = msm_set_pinctrl(pinctrl_info, STATE_TDM_ACTIVE);
-			if (ret)
-				pr_err("%s: TDM TLMM pinctrl set failed with %d\n",
-					__func__, ret);
-		}
-		atomic_inc(&pinctrl_ref_count);
-	}
-
-	return ret;
-}
-
-static void sdm845_tdm_snd_shutdown(struct snd_pcm_substream *substream)
-{
-	int ret = 0;
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
-	struct snd_soc_card *card = rtd->card;
-	struct msm_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
-	struct msm_pinctrl_info *pinctrl_info = &pdata->pinctrl_info;
-
-	/* currently only supporting TDM_RX_0/TDM_RX_1 and TDM_TX_0 */
-	if ((cpu_dai->id == AFE_PORT_ID_QUATERNARY_TDM_RX) ||
-		(cpu_dai->id == AFE_PORT_ID_QUATERNARY_TDM_TX) ||
-		(cpu_dai->id == AFE_PORT_ID_QUATERNARY_TDM_RX_1)) {
-		atomic_dec(&pinctrl_ref_count);
-		if (atomic_read(&pinctrl_ref_count) == 0) {
-			ret = msm_set_pinctrl(pinctrl_info, STATE_DISABLE);
-			if (ret)
-				pr_err("%s: TDM TLMM pinctrl set failed with %d\n",
-					__func__, ret);
-		}
-	}
-}
-
 static struct snd_soc_ops sdm845_tdm_be_ops = {
-	.hw_params = sdm845_tdm_snd_hw_params,
-	.startup = sdm845_tdm_snd_startup,
-	.shutdown = sdm845_tdm_snd_shutdown
+	.hw_params = sdm845_tdm_snd_hw_params
 };
 
 static int msm_fe_qos_prepare(struct snd_pcm_substream *substream)
@@ -4944,6 +4842,8 @@ clean_up:
 	if (ret < 0)
 		mi2s_intf_conf[index].ref_cnt--;
 	mutex_unlock(&mi2s_intf_conf[index].lock);
+
+	msleep(2);
 err:
 	return ret;
 }
@@ -4983,19 +4883,6 @@ static void msm_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 
 }
 
-static void cs35l41_calibrate(void) {
-	int ret;
-
-	if (!atomic_read(&cs35l41_calibrated)) {
-		ret = msm_crus_calibrate();
-		if (ret < 0)
-			// /dev may be uninitialized at this moment
-			atomic_set(&cs35l41_calibrated, 0);
-		else
-			atomic_set(&cs35l41_calibrated, 1);
-	}
-}
-
 static int cs35l41_snd_startup(struct snd_pcm_substream *substream) {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_card *card = rtd->card;
@@ -5004,12 +4891,17 @@ static int cs35l41_snd_startup(struct snd_pcm_substream *substream) {
 	if (atomic_inc_return(&cs35l41_mclk_rsc_ref) != 1)
 		return 0;
 
-	cs35l41_calibrate();
+	dev_info(card->dev, "%s: starting up\n", __func__);
 
 	ret = msm_mi2s_snd_startup(substream);
 	if (ret < 0) {
 		dev_err(card->dev, "%s: failed to startup mi2s\n", __func__);
 		goto exit;
+	}
+
+	if (rtd->num_codecs == 0) {
+		dev_warn(card->dev, "%s: no codecs!\n", __func__);
+		goto done;
 	}
 
 	for (i = 0; i < rtd->num_codecs; i++) {
@@ -5022,7 +4914,7 @@ static int cs35l41_snd_startup(struct snd_pcm_substream *substream) {
 		}
 
 		ret = snd_soc_codec_set_sysclk(rtd->codec_dais[i]->codec,
-			0, 0, 1536000, SND_SOC_CLOCK_IN);
+			0, 0, Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ, SND_SOC_CLOCK_IN);
 		if (ret) {
 			dev_err(card->dev,
 				"%s: failed to set dai[%d] codec SCLK\n", __func__, i);
@@ -5030,19 +4922,31 @@ static int cs35l41_snd_startup(struct snd_pcm_substream *substream) {
 		}
 
 		ret = snd_soc_dai_set_sysclk(rtd->codec_dais[i],
-			0, 1536000, SND_SOC_CLOCK_IN);
+			0, Q6AFE_LPASS_IBIT_CLK_1_P536_MHZ, SND_SOC_CLOCK_IN);
 		if (ret) {
 			dev_err(card->dev,
 				"%s: failed to set dai[%d] SCLK\n", __func__, i);
 			goto exit;
 		}
-	} 
+	}
 
+done:
 	return 0;
 
 exit:
 	atomic_dec(&cs35l41_mclk_rsc_ref);
 	return ret;
+}
+
+static void cs35l41_snd_shutdown(struct snd_pcm_substream *substream) {
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_card *card = rtd->card;
+
+	if (atomic_dec_return(&cs35l41_mclk_rsc_ref) != 0)
+		return;
+
+	dev_info(card->dev, "%s: shutting down\n", __func__);
+	msm_mi2s_snd_shutdown(substream);
 }
 
 #define CS35L41_TARGETS_COUNT 7
@@ -5067,28 +4971,16 @@ static const char *cs35l41_ignore_suspend_targets[2][CS35L41_TARGETS_COUNT] = {
 	},
 };
 
-static void cs35l41_snd_shutdown(struct snd_pcm_substream *substream) {
-	if (atomic_dec_return(&cs35l41_mclk_rsc_ref) != 0)
-		return;
-
-	msm_mi2s_snd_shutdown(substream);
-}
-
 static int cs35l41_init(struct snd_soc_pcm_runtime *rtd) {
 	struct snd_soc_codec *codec;
-	const char *name;
 	int i, j, ret;
 
-	cs35l41_calibrate();
 	atomic_set(&cs35l41_mclk_rsc_ref, 0);
 
 	for (i = 0; i < 2; i++) {
 		codec = rtd->codec_dais[i]->codec;
-		name = codec->dev->init_name;
-		if (!name)
-			name = codec->dev->kobj.name;
 		dev_info(rtd->card->dev, "%s: setting up %s\n",
-			__func__, name);
+			__func__, dev_name(codec->dev));
 		
 		for (j = 0; j < CS35L41_TARGETS_COUNT; j++)
 			snd_soc_dapm_ignore_suspend(&codec->component.dapm,
@@ -5800,6 +5692,21 @@ static struct snd_soc_dai_link msm_common_misc_fe_dai_links[] = {
 		.codec_name = "snd-soc-dummy",
 	},
 	{
+		.name = "QUAT_MI2S Hostless",
+		.stream_name = "QUAT_MI2S Hostless Playback",
+		.cpu_dai_name = "QUAT_MI2S_RX_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			    SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
 		.name = "SLIMBUS_7 Hostless",
 		.stream_name = "SLIMBUS_7 Hostless",
 		.cpu_dai_name = "SLIMBUS7_HOSTLESS",
@@ -6466,29 +6373,29 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.stream_name = "Quaternary MI2S Playback",
 		.cpu_dai_name = "msm-dai-q6-mi2s.3",
 		.platform_name = "msm-pcm-routing",
-		.ops = &cs35l41_be_ops,
 		.codecs = cs35l41_codec_components,
-		.init = cs35l41_init,
 		.num_codecs = 2,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_QUATERNARY_MI2S_RX,
 		.be_hw_params_fixup = msm_be_hw_params_fixup,
+		.ops = &cs35l41_be_ops,
 		.ignore_suspend = 1,
 		.ignore_pmdown_time = 1,
+		.init = cs35l41_init,
 	},
 	{
 		.name = LPASS_BE_QUAT_MI2S_TX,
 		.stream_name = "Quaternary MI2S Capture",
 		.cpu_dai_name = "msm-dai-q6-mi2s.3",
 		.platform_name = "msm-pcm-routing",
-		.ops = &cs35l41_be_ops,
 		.codecs = cs35l41_codec_components,
 		.num_codecs = 2,
 		.id = MSM_BACKEND_DAI_QUATERNARY_MI2S_TX,
 		.be_hw_params_fixup = msm_be_hw_params_fixup,
+		.ops = &cs35l41_be_ops,
 		.ignore_suspend = 1,
-		.no_host_mode = 1,
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
 	},
 };
 
