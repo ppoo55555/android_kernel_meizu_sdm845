@@ -18,6 +18,7 @@
 #include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/of_device.h>
+#include <linux/meizu.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
@@ -4926,6 +4927,7 @@ static int msm_dai_q6_mi2s_dev_probe(struct platform_device *pdev)
 {
 	struct msm_dai_q6_mi2s_dai_data *dai_data;
 	const char *q6_mi2s_dev_id = "qcom,msm-dai-q6-mi2s-dev-id";
+	const char *mi2s_rx_lines_node, *mi2s_tx_lines_node;
 	u32 tx_line = 0;
 	u32  rx_line = 0;
 	u32 mi2s_intf = 0;
@@ -4960,19 +4962,29 @@ static int msm_dai_q6_mi2s_dev_probe(struct platform_device *pdev)
 		goto rtn;
 	}
 
-	rc = of_property_read_u32(pdev->dev.of_node, "qcom,msm-mi2s-rx-lines",
+	if (mz_is_16th()
+			&& mz_get_hw_version() < 2
+			&& mi2s_intf == MSM_QUAT_MI2S) {
+		mi2s_rx_lines_node = "qcom,msm-mi2s-rx-lines-b2";
+		mi2s_tx_lines_node = "qcom,msm-mi2s-tx-lines-b2";
+	} else {
+		mi2s_rx_lines_node = "qcom,msm-mi2s-rx-lines";
+		mi2s_tx_lines_node = "qcom,msm-mi2s-tx-lines";
+	}
+
+	rc = of_property_read_u32(pdev->dev.of_node, mi2s_rx_lines_node,
 				  &rx_line);
 	if (rc) {
 		dev_err(&pdev->dev, "%s: Rx line from DT file %s\n", __func__,
-			"qcom,msm-mi2s-rx-lines");
+			mi2s_rx_lines_node);
 		goto free_pdata;
 	}
 
-	rc = of_property_read_u32(pdev->dev.of_node, "qcom,msm-mi2s-tx-lines",
+	rc = of_property_read_u32(pdev->dev.of_node, mi2s_tx_lines_node,
 				  &tx_line);
 	if (rc) {
 		dev_err(&pdev->dev, "%s: Tx line from DT file %s\n", __func__,
-			"qcom,msm-mi2s-tx-lines");
+			mi2s_tx_lines_node);
 		goto free_pdata;
 	}
 	dev_dbg(&pdev->dev, "dev name %s Rx line 0x%x , Tx ine 0x%x\n",
