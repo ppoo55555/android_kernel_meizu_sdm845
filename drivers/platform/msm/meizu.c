@@ -23,25 +23,34 @@
 #include <linux/fs.h>
 #include <linux/meizu.h>
 #include <linux/mm.h>
+#include <linux/module.h>
+#include <linux/of.h>
 #include <linux/printk.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <linux/types.h>
+
+#define UFS_BLK_SIZE 4096
+
+static struct mz_device_info g_device = {
+	.hw_version = 1 << 8,
+	.sw_version = "0xdeadbeef",
+	.model = MZ_DEVICE_UNKNOWN,
+};
+static struct proc_dir_entry *g_mz_dir, *g_mz_model, *g_mz_hw_ver;
 
 extern dev_t sd_lookup_partition(const char *name);
 
-int mz_part_read(const char *part, char *buf, size_t count, loff_t offset)
+static inline int __mz_part_read(const char *part, struct page **buf, loff_t offset)
 {
-	int retry = 50;
-	sector_t start, size;
 	dev_t part_devt = MKDEV(0, 0);
 	struct block_device *bdev;
 	struct bio *bio;
 	struct page *page;
 	int ret = 0;
-	
-	DECLARE_COMPLETION_ONSTACK(wait);
 
-	if (count > (1 << SECTOR_SHIFT) || offset % (1 << SECTOR_SHIFT)) {
-		pr_err("%s: unsupported count or offset\n", __func__);
+	if (offset % UFS_BLK_SIZE) {
+		pr_err("%s: unsupported offset %lu\n", __func__, offset);
 		return -EINVAL;
 	}
 
@@ -75,7 +84,7 @@ int mz_part_read(const char *part, char *buf, size_t count, loff_t offset)
 	bio->bi_iter.bi_sector = offset >> SECTOR_SHIFT;
 	bio_set_op_attrs(bio, REQ_OP_READ, READ_SYNC);
 
-	if (!bio_add_page(bio, page, PAGE_SIZE, 0)) {
+	if (!bio_add_page(bio, page, UFS_BLK_SIZE, 0)) {
 		pr_err("%s: bio_add_page error\n", __func__);
 		ret = -EIO;
 		goto free_page;
@@ -87,9 +96,10 @@ int mz_part_read(const char *part, char *buf, size_t count, loff_t offset)
 		goto free_page;
 	}
 
-	memcpy(buf, page_address(page), count);
+	*buf = page;
 	ret = 0;
-	
+	goto free_bio;
+
 free_page:
 	__free_page(page);
 free_bio:
@@ -99,35 +109,205 @@ free_blkdev:
 	return ret;
 }
 
-// ssize_t mz_part_read(const char *part, char *buf, size_t count, loff_t offset)
-// {
-// 	struct file *fp;
-// 	char path[128];
-// 	mm_segment_t old_fs;
-// 	ssize_t ret = 0;
+int mz_part_read(const char *part, char *buf, size_t count, loff_t offset)
+{
+	int ret;
+	loff_t shift = offset % UFS_BLK_SIZE;
+	struct page *page;
 
-// 	snprintf(path, 128, "/dev/block/bootdevice/by-name/%s", part);
+	if (shift + count > UFS_BLK_SIZE) {
+		pr_err("%s: overreading 4K block by %ld bytes\n",
+			__func__, shift + count - UFS_BLK_SIZE);
+		return -EINVAL;
+	}
 
-// 	old_fs = get_fs();
-// 	set_fs(get_ds());
-// 	fp = filp_open(path, O_RDONLY, 0);
-// 	mdelay(5);
-// 	if (IS_ERR(fp)) {
-// 		pr_err("%s: Failed to open private partition: %d\n",
-// 			__func__, PTR_ERR(fp));
-// 		goto out;
-// 	}
+	ret = __mz_part_read(part, &page, offset - shift);
+	if (ret < 0)
+		return ret;
 
-// 	fp->f_pos = offset;
-// 	if (!fp->f_op->read)
-// 		ret = vfs_read(fp, buf, count, &fp->f_pos);
-// 	else
-// 		ret = fp->f_op->read(fp, buf, count, &fp->f_pos);
-
-// 	filp_close(fp, NULL);
-
-// out:
-//   	set_fs(old_fs);
-//     return ret;
-// }
+	memcpy(buf, page_address(page) + shift, count);
+	__free_page(page);
+	
+	return ret;
+}
 EXPORT_SYMBOL(mz_part_read);
+
+int mz_get_hw_version(void)
+{
+	return g_device.hw_version;
+}
+EXPORT_SYMBOL(mz_get_hw_version);
+
+enum mz_device_model mz_get_model(void)
+{
+	return g_device.model;
+}
+EXPORT_SYMBOL(mz_get_model);
+
+static int mz_gather_bootinfo(void)
+{
+	struct device_node *node =
+		of_find_node_by_path("/bootinfo");
+	const char *sw_version = NULL;
+	int ret = 0;
+	
+	if (!node) {
+		pr_err("%s: failed to find bootinfo\n", __func__);
+		return -EINVAL;
+	}
+
+	ret = of_property_read_string(node,
+		"sw_version", &sw_version);
+	if (ret < 0) {
+		pr_err("%s: failed to get sw_version\n", __func__);
+		return -EINVAL;
+	} else
+		strncpy(g_device.sw_version, sw_version, 16);
+
+	ret = of_property_read_u32(node,
+		"hw_version", &g_device.hw_version);
+	if (ret < 0) {
+		pr_err("%s: failed to get hw_version\n", __func__);
+		return -EINVAL;
+	}
+
+	// TODO: Zero support
+	// if doesn't match 0x8X2XXXXX pattern
+	if (g_device.sw_version[2] != '8'
+		  || g_device.sw_version[4] != '2') {
+invalid_sw_version:
+		pr_warn("%s: invalid sw_version: %s\n",
+			__func__, g_device.sw_version);
+		g_device.model = MZ_DEVICE_UNKNOWN;
+		return 0;
+	}
+
+	switch (g_device.sw_version[3]) {
+	case '8': // 0x882XXXXX
+		g_device.model = MZ_DEVICE_16TH;
+		break;
+	case '9': // 0x892XXXXX
+		g_device.model = MZ_DEVICE_16THPLUS;
+		break;
+	default:
+		goto invalid_sw_version;
+	}
+
+	return 0;
+}
+
+static inline const char *get_model_id(enum mz_device_model model)
+{
+	switch (model) {
+	case MZ_DEVICE_UNKNOWN:
+		return "UNKNOWN";
+	case MZ_DEVICE_16TH:
+		return "16TH";
+	case MZ_DEVICE_16THPLUS:
+		return "16THPLUS";
+	case MZ_DEVICE_ZERO:
+		return "ZERO";
+	}
+}
+
+static inline const char *get_model_name(enum mz_device_model model)
+{
+	switch (model) {
+	case MZ_DEVICE_UNKNOWN:
+		return "Unknown";
+	case MZ_DEVICE_16TH:
+		return "16th";
+	case MZ_DEVICE_16THPLUS:
+		return "16th Plus";
+	case MZ_DEVICE_ZERO:
+		return "Zero";
+	}
+}
+
+static int mz_model_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%s\n", get_model_id(g_device.model));
+	return 0;
+}
+
+static int mz_model_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mz_model_show, NULL);
+}
+
+static struct file_operations mz_model_fops = {
+	.owner = THIS_MODULE,
+	.open = mz_model_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int mz_hw_ver_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%d\n", g_device.hw_version);
+	return 0;
+}
+
+static int mz_hw_ver_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mz_hw_ver_show, NULL);
+}
+
+static struct file_operations mz_hw_ver_fops = {
+	.owner = THIS_MODULE,
+	.open = mz_hw_ver_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static void mz_init_proc(void) {
+	g_mz_dir = proc_mkdir("meizu", NULL);
+	if (!g_mz_dir) {
+		pr_warn("%s: failed to create /proc/meizu\n", __func__);
+		return;
+	}
+
+	g_mz_model = proc_create("model", 0644, g_mz_dir, &mz_model_fops);
+	if (!g_mz_model) {
+		pr_warn("%s: failed to create /proc/meizu/model\n", __func__);
+		return;
+	}
+
+	g_mz_hw_ver = proc_create("hw_version", 0644, g_mz_dir, &mz_hw_ver_fops);
+	if (!g_mz_hw_ver) {
+		pr_warn("%s: failed to create /proc/meizu/hw_version\n", __func__);
+		return;
+	}
+}
+
+static void mz_exit_proc(void) {
+	if (g_mz_hw_ver)
+		proc_remove(g_mz_hw_ver);
+	if (g_mz_model)
+		proc_remove(g_mz_model);
+	if (g_mz_dir)
+		proc_remove(g_mz_dir);
+}
+
+int __init mz_init(void)
+{
+	int ret = mz_gather_bootinfo();
+	if (ret < 0)
+		return ret;
+
+	pr_info("%s: running MS kernel on Meizu %s (hardware ver: %d)\n",
+		__func__, get_model_name(g_device.model), g_device.hw_version);
+
+	mz_init_proc();
+	return 0;
+}
+
+void __exit mz_exit(void)
+{
+	return;
+}
+
+arch_initcall(mz_init);
+module_exit(mz_exit);
