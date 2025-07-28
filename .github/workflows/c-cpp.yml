@@ -1,10 +1,9 @@
+# .github/workflows/build-kernel.yml
 name: meizu_sdm845
 
 on:
-  push:
-    branches: [ lineage-21 ]
-  pull_request:
-    branches: [ lineage-21 ]
+  push:          { branches: [ lineage-21 ] }
+  pull_request:  { branches: [ lineage-21 ] }
   workflow_dispatch:
     inputs:
       KERNEL_SUFFIX:
@@ -52,12 +51,13 @@ jobs:
         git config --global user.name  "Futaba"
         git config --global user.email "3199167602@qq.com"
 
-    - name: Install dependencies
+    - name: Install build dependencies
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y \
-          clang-17 lld-17 llvm-17-dev \
-          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+          clang-17 lld-17 llvm-17-dev llvm-17-tools \
+          gcc-aarch64-linux-gnu  binutils-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi  binutils-arm-linux-gnueabi \
           bc bison flex libssl-dev libelf-dev dwarves \
           build-essential cpio python3 ccache
 
@@ -89,13 +89,19 @@ jobs:
         echo 'CONFIG_LOCALVERSION="${{ github.event.inputs.KERNEL_SUFFIX }}"' >> out/.config
 
     #####################################################################
-    # 4 · 编译（跳过 gcc-wrapper）
+    # 4 · 编译
     #####################################################################
     - name: Build kernel
       run: |
         export KBUILD_BUILD_TIMESTAMP="${{ github.event.inputs.KERNEL_TIME }}"
-        export PATH="/usr/lib/ccache:$PATH"
+
+        # 1) 把 llvm-17 工具加入 PATH（解决 llvm-nm 等找不到）
+        export PATH="/usr/lib/llvm-17/bin:/usr/lib/ccache:$PATH"
+
+        # 2) 32-bit 兼容层工具链
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
         cd kernel_workspace/kernel
         make -j$(nproc) O=out \
              ARCH=arm64 \
