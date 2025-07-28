@@ -1,35 +1,19 @@
-name: mz
+# .github/workflows/build-kernel.yml
+name: meizu_sdm845   # 只是显示名称，可自行改
 
 on:
   push:
-    branches: [ lineage-21 ]
+    branches: [ lineage-21 ]     # 触发分支
   pull_request:
     branches: [ lineage-21 ]
   workflow_dispatch:
     inputs:
       KERNEL_SUFFIX:
-        description: "内核名称后缀（可用中文 / emoji）"
-        required: true
+        description: "本地版本后缀（可中文 / emoji）"
         default: "-酷安FutabaWa"
       KERNEL_TIME:
-        description: "内核构建日期（默认保留原厂日期）"
-        required: true
+        description: "自定义构建日期"
         default: "Tue Dec 17 23:36:49 UTC 2024"
-      enable_feature_x:
-        description: "是否启用 KPM"
-        required: false
-        default: false
-        type: boolean
-      enable_feature_y:
-        description: "是否启用 LZ4KD"
-        required: false
-        default: false
-        type: boolean
-      enable_feature_z:
-        description: "是否集成 sched_ext"
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   build:
@@ -38,7 +22,6 @@ jobs:
     env:
       ARCH: arm64
       SUBARCH: arm64
-      DEFCONFIG_PATH: kernel_workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig
       # ---------- ccache ----------
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
@@ -47,9 +30,9 @@ jobs:
       CCACHE_MAXSIZE: 8G
 
     steps:
-    ##########################################################################
-    # 0 · 释放磁盘
-    ##########################################################################
+    #####################################################################
+    # 0 · 释放磁盘空间（可选）
+    #####################################################################
     - name: Maximize build space
       uses: easimon/maximize-build-space@master
       with:
@@ -60,22 +43,23 @@ jobs:
         remove-haskell: true
         remove-codeql:  true
 
-    ##########################################################################
-    # 1 · 基础环境
-    ##########################################################################
-    - uses: actions/checkout@v4
+    #####################################################################
+    # 1 · 准备环境
+    #####################################################################
+    - uses: actions/checkout@v4   # 仅 checkout 当前 CI 仓库
 
     - name: Configure git
       run: |
         git config --global user.name  "Futaba"
         git config --global user.email "3199167602@qq.com"
 
-    - name: Install dependencies
+    - name: Install build dependencies
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y python3 git curl ccache \
+        sudo apt-get install -y \
+          clang-17 lld-17 llvm-17-dev gcc-aarch64-linux-gnu \
           bc bison flex libssl-dev libelf-dev dwarves \
-          build-essential cpio
+          build-essential cpio python3 ccache
 
     - name: Restore ccache
       uses: actions/cache@v3
@@ -85,131 +69,49 @@ jobs:
         restore-keys: |
           ccache-${{ runner.os }}-
 
-    ##########################################################################
-    # 2 · 同步代码
-    ##########################################################################
-    - name: Install repo tool
+    #####################################################################
+    # 2 · 克隆你的内核源码
+    #####################################################################
+    - name: Clone kernel source
       run: |
-        curl -Lo ~/repo https://storage.googleapis.com/git-repo-downloads/repo
-        chmod +x ~/repo
-        sudo mv ~/repo /usr/local/bin/repo
+        mkdir -p kernel_workspace
+        git clone --depth=1 https://github.com/ppoo55555/android_kernel_meizu_sdm845 \
+                  kernel_workspace/kernel
 
-    - name: Initialize repo and sync
+    #####################################################################
+    # 3 · 生成 defconfig + 可选后缀
+    #####################################################################
+    - name: Prepare defconfig
       run: |
-        mkdir -p kernel_workspace && cd kernel_workspace
-        repo init -u https://github.com/HanKuCha/kernel_manifest.git \
-                  -b refs/heads/oneplus/sm8750 \
-                  -m JiuGeFaCai_oneplus_13_v.xml --depth=1
-        repo sync -c -j$(nproc) --no-tags
-        rm kernel_platform/common/android/abi_gki_protected_exports_* || true
-        rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || true
+        cd kernel_workspace/kernel
+        # 生成官方 defconfig（请确认文件名）
+        make O=out LLVM=1 LLVM_IAS=1 vendor/meizu_sdm845_defconfig
+        # 关闭自动版本号，追加自定义后缀
+        sed -i 's/CONFIG_LOCALVERSION_AUTO=y/CONFIG_LOCALVERSION_AUTO=n/' out/.config
+        echo 'CONFIG_LOCALVERSION="${{ github.event.inputs.KERNEL_SUFFIX }}"' >> out/.config
 
-    ##########################################################################
-    # 3 · 自定义补丁
-    ##########################################################################
-    - name: Apply HMBird GKI patch
-      run: |
-        cd kernel_workspace/kernel_platform/common/drivers
-        cat > hmbird_patch.c << 'EOF'
-        #include <linux/init.h>
-        #include <linux/module.h>
-        #include <linux/of.h>
-        #include <linux/slab.h>
-        #include <linux/string.h>
-        static int __init hmbird_patch_init(void)
-        {
-            struct device_node *np = of_find_node_by_path("/soc/oplus,hmbird/version_type");
-            const char *type;
-            if (!np || of_property_read_string(np, "type", &type))
-                return 0;
-            if (!strcmp(type, "HMBIRD_OGKI")) {
-                struct property *prop = of_find_property(np, "type", NULL);
-                struct property *newp = kzalloc(sizeof(*prop), GFP_KERNEL);
-                if (!prop || !newp)
-                    return 0;
-                memcpy(newp, prop, sizeof(*prop));
-                newp->value   = kstrdup("HMBIRD_GKI", GFP_KERNEL);
-                newp->length  = strlen("HMBIRD_GKI") + 1;
-                of_remove_property(np, prop);
-                of_add_property(np, newp);
-                pr_info("hmbird_patch: converted OGKI -> GKI\n");
-            }
-            of_node_put(np);
-            return 0;
-        }
-        early_initcall(hmbird_patch_init);
-        MODULE_LICENSE("GPL");
-        MODULE_DESCRIPTION("Force HMBIRD_GKI version");
-        EOF
-        grep -q "hmbird_patch.o" Makefile || echo "obj-y += hmbird_patch.o" >> Makefile
-        cd ../../../
-        git add -A && git commit -m "Add HMBird GKI patch" || true
-
-    - name: Apply LZ4KD patches
-      if: ${{ inputs.enable_feature_y }}
-      run: |
-        cd kernel_workspace
-        git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git
-        cp SukiSU_patch/other/zram/zram_patch/6.6/lz4kd.patch kernel_platform/common/
-        cd kernel_platform/common
-        patch -p1 -F3 < lz4kd.patch || true
-
-    - name: Add sched_ext
-      if: ${{ inputs.enable_feature_z }}
-      run: |
-        cd kernel_workspace/kernel_platform
-        git clone --depth=1 https://github.com/HanKuCha/sched_ext.git
-        cp -r sched_ext/* common/kernel/sched
-        rm -rf sched_ext .git
-
-    ##########################################################################
-    # 4 · 修改 defconfig
-    ##########################################################################
-    - name: Update kernel config & metadata
-      run: |
-        DEF=$DEFCONFIG_PATH
-        # 通用
-        cat >> $DEF <<'CFG'
-        CONFIG_LOCALVERSION_AUTO=n
-        CONFIG_TCP_CONG_ADVANCED=y
-        CONFIG_TCP_CONG_BBR=y
-        CONFIG_NET_SCH_FQ=y
-        CONFIG_DEFAULT_TCP_CONG="bbr"
-        CONFIG_CRYPTO_LZ4HC=y
-        CONFIG_CRYPTO_LZ4K=y
-        CONFIG_CRYPTO_LZ4KD=y
-        CONFIG_CRYPTO_842=y
-        CFG
-        # 条件
-        [[ "${{ inputs.enable_feature_x }}" == "true" ]] && echo 'CONFIG_KPM=y' >> $DEF
-        # 后缀
-        sed -i 's/-4k/${{ github.event.inputs.KERNEL_SUFFIX }}/' $DEF
-        # 跳过 GKI 校验
-        sed -i 's/check_defconfig//' kernel_workspace/kernel_platform/common/build.config.gki
-
-    ##########################################################################
-    # 5 · 编译
-    ##########################################################################
-    - name: Build kernel (LLVM toolchain)
+    #####################################################################
+    # 4 · 编译
+    #####################################################################
+    - name: Build kernel
       run: |
         export KBUILD_BUILD_TIMESTAMP="${{ github.event.inputs.KERNEL_TIME }}"
-        export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
         export PATH="/usr/lib/ccache:$PATH"
-        sudo apt-get install -y libelf-dev
-        cd kernel_workspace/kernel_platform/common
-        make -j$(nproc) LLVM=1 LLVM_IAS=1 \
+        cd kernel_workspace/kernel
+        make -j$(nproc) O=out \
+             LLVM=1 LLVM_IAS=1 \
              ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-             O=out gki_defconfig all
+             all
 
-    ##########################################################################
-    # 6 · 打包产物
-    ##########################################################################
-    - name: Package artifacts
+    #####################################################################
+    # 5 · 打包产物
+    #####################################################################
+    - name: Package Image.gz-dtb
       run: |
         mkdir -p dist
-        cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image.gz-dtb dist/
+        cp kernel_workspace/kernel/out/arch/arm64/boot/Image.gz-dtb dist/
 
-    - name: Upload Image.gz-dtb
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: Image_${{ github.sha }}
