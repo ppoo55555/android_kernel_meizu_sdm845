@@ -15,49 +15,65 @@ jobs:
     env:
       ARCH: arm64
       SUBARCH: arm64
+      CLANG_VERSION: r498229b        # 升级工具链只改这一行
+      TOOLCHAIN_DIR: clang
+      DEFCONFIG: vendor/meizu_sdm845_defconfig   # ← 按需调整
 
     steps:
-    # 1. 拉取源码
+    # 1. 拉源码
     - name: Checkout source
       uses: actions/checkout@v4
 
-    # 2. 安装编译依赖
+    # 2. 安装依赖
     - name: Install build deps
       run: |
-        sudo apt-get update
+        sudo apt-get update -qq
         sudo apt-get install -y \
           bc bison flex libssl-dev libelf-dev dwarves \
-          build-essential cpio python3
+          build-essential cpio python3 curl
 
-    # 3. 下载并解压预编译 Clang-17 工具链
-    - name: Fetch clang toolchain
+    # 3. 恢复或下载 clang 工具链
+    - name: Cache clang toolchain
+      id: cache-clang
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.TOOLCHAIN_DIR }}
+        key: ${{ runner.os }}-${{ env.CLANG_VERSION }}
+
+    - name: Download clang (if cache miss)
+      if: steps.cache-clang.outputs.cache-hit != 'true'
       run: |
-        wget -q https://github.com/ClangBuiltLinux/tc-release/raw/main/clang-r498229b.tar.gz
-        tar -xf clang-r498229b.tar.gz
-        echo "$PWD/clang/bin" >> $GITHUB_PATH          # 置入 PATH
-        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+        set -e
+        URL="https://github.com/ClangBuiltLinux/tc-release/raw/main/clang-${CLANG_VERSION}.tar.gz"
+        echo "Fetching $URL"
+        curl -L --retry 3 --output clang.tar.gz "$URL"
+        tar -xf clang.tar.gz
+        rm clang.tar.gz
 
-    # 4. 生成 defconfig（请改成你的设备配置）
+    # 4. 设置环境变量
+    - name: Export toolchain to PATH
+      run: |
+        echo "$PWD/${TOOLCHAIN_DIR}/bin" >> "$GITHUB_PATH"
+        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+    # 5. 生成 defconfig
     - name: Generate defconfig
       run: |
-        make O=out \
-             CC=clang \
-             vendor/meizu_sdm845_defconfig
+        make O=out CC=clang $DEFCONFIG
 
-    # 5. 编译内核
+    # 6. 编译
     - name: Build kernel
       run: |
-        make -j$(nproc) O=out \
-             CC=clang \
-             CROSS_COMPILE=${{ env.CROSS_COMPILE }}
+        make -j$(nproc) O=out CC=clang CROSS_COMPILE=${{ env.CROSS_COMPILE }}
 
-    # 6. 打包产物（示例仅复制 Image.gz-dtb，可自行添加 mkbootimg）
+    # 7. 打包产物
     - name: Package artifacts
       run: |
         mkdir -p dist
         cp out/arch/arm64/boot/Image.gz-dtb dist/
+        # 如需 boot.img → 在此处调用 mkbootimg/AnyKernel3
 
-    # 7. 上传产物
+    # 8. 上传产物
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
