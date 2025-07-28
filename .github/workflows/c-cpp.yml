@@ -30,7 +30,7 @@ jobs:
 
     steps:
     #####################################################################
-    # 0 · 释放磁盘空间（可选）
+    # 0 · 释放磁盘
     #####################################################################
     - name: Maximize build space
       uses: easimon/maximize-build-space@master
@@ -43,16 +43,16 @@ jobs:
         remove-codeql:  true
 
     #####################################################################
-    # 1 · 准备环境
+    # 1 · 环境
     #####################################################################
-    - uses: actions/checkout@v4   # 只 checkout 当前 CI 仓库
+    - uses: actions/checkout@v4
 
     - name: Configure git
       run: |
         git config --global user.name  "Futaba"
         git config --global user.email "3199167602@qq.com"
 
-    - name: Install build dependencies
+    - name: Install dependencies
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y \
@@ -70,7 +70,7 @@ jobs:
           ccache-${{ runner.os }}-
 
     #####################################################################
-    # 2 · 克隆你的内核源码
+    # 2 · 克隆源码
     #####################################################################
     - name: Clone kernel source
       run: |
@@ -79,33 +79,34 @@ jobs:
                   kernel_workspace/kernel
 
     #####################################################################
-    # 3 · 生成 defconfig + 可选后缀
+    # 3 · defconfig
     #####################################################################
     - name: Prepare defconfig
       run: |
         cd kernel_workspace/kernel
-        # 请确认 defconfig 文件名；此处用 mz845_defconfig
         make O=out LLVM=1 LLVM_IAS=1 mz845_defconfig
-        # 关闭自动版本号，追加自定义后缀
         sed -i 's/CONFIG_LOCALVERSION_AUTO=y/CONFIG_LOCALVERSION_AUTO=n/' out/.config
         echo 'CONFIG_LOCALVERSION="${{ github.event.inputs.KERNEL_SUFFIX }}"' >> out/.config
 
     #####################################################################
-    # 4 · 编译
+    # 4 · 编译（跳过 gcc-wrapper）
     #####################################################################
     - name: Build kernel
       run: |
         export KBUILD_BUILD_TIMESTAMP="${{ github.event.inputs.KERNEL_TIME }}"
         export PATH="/usr/lib/ccache:$PATH"
-        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-   # 32-bit 兼容工具链
+        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
         cd kernel_workspace/kernel
         make -j$(nproc) O=out \
+             ARCH=arm64 \
+             CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
+             OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+             CROSS_COMPILE=aarch64-linux-gnu- \
              LLVM=1 LLVM_IAS=1 \
-             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
              all
 
     #####################################################################
-    # 5 · 打包产物
+    # 5 · 打包
     #####################################################################
     - name: Package Image.gz-dtb
       run: |
