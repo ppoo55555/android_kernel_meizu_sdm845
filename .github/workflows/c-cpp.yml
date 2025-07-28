@@ -1,5 +1,4 @@
-# .github/workflows/build-kernel.yml
-name: Android-Kernel CI (SDM845)
+name: mz
 
 on:
   push:
@@ -7,6 +6,30 @@ on:
   pull_request:
     branches: [ lineage-21 ]
   workflow_dispatch:
+    inputs:
+      KERNEL_SUFFIX:
+        description: "内核名称后缀（可用中文 / emoji）"
+        required: true
+        default: "-酷安FutabaWa"
+      KERNEL_TIME:
+        description: "内核构建日期（默认保留原厂日期）"
+        required: true
+        default: "Tue Dec 17 23:36:49 UTC 2024"
+      enable_feature_x:
+        description: "是否启用 KPM"
+        required: false
+        default: false
+        type: boolean
+      enable_feature_y:
+        description: "是否启用 LZ4KD"
+        required: false
+        default: false
+        type: boolean
+      enable_feature_z:
+        description: "是否集成 sched_ext"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -15,79 +38,179 @@ jobs:
     env:
       ARCH: arm64
       SUBARCH: arm64
-      # ---------- 自定义区 ----------
-      CLANG_TAG:  clang-r498229b          # Release 标签
-      CLANG_FILE: clang-r498229b.tar.gz   # 资产文件
-      DEFCONFIG:  vendor/meizu_sdm845_defconfig
-      TOOLCHAIN_DIR: clang
-      # --------------------------------
+      DEFCONFIG_PATH: kernel_workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig
+      # ---------- ccache ----------
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+      CCACHE_DIR: /home/runner/.ccache
+      CCACHE_MAXSIZE: 8G
 
     steps:
-    # 1. 取源码
+    ##########################################################################
+    # 0 · 释放磁盘
+    ##########################################################################
+    - name: Maximize build space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 8192
+        temp-reserve-mb: 2048
+        remove-dotnet:  true
+        remove-android: true
+        remove-haskell: true
+        remove-codeql:  true
+
+    ##########################################################################
+    # 1 · 基础环境
+    ##########################################################################
     - uses: actions/checkout@v4
 
-    # 2. 依赖
-    - name: Install deps
+    - name: Configure git
+      run: |
+        git config --global user.name  "Futaba"
+        git config --global user.email "3199167602@qq.com"
+
+    - name: Install dependencies
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y \
+        sudo apt-get install -y python3 git curl ccache \
           bc bison flex libssl-dev libelf-dev dwarves \
-          build-essential cpio python3 curl
+          build-essential cpio
 
-    # 3. 工具链缓存
-    - name: Cache clang
-      id: cache-clang
-      uses: actions/cache@v4
+    - name: Restore ccache
+      uses: actions/cache@v3
       with:
-        path: ${{ env.TOOLCHAIN_DIR }}
-        key: >-
-          ${{ runner.os }}-${{ env.CLANG_TAG }}
+        path: /home/runner/.ccache
+        key:  ccache-${{ runner.os }}-${{ github.ref }}
+        restore-keys: |
+          ccache-${{ runner.os }}-
 
-    # 4. 下载并解压（若缓存未命中）
-    - name: Download clang release
-      if: steps.cache-clang.outputs.cache-hit != 'true'
+    ##########################################################################
+    # 2 · 同步代码
+    ##########################################################################
+    - name: Install repo tool
       run: |
-        set -e
-        URL=https://github.com/ClangBuiltLinux/tc-release/releases/download/${CLANG_TAG}/${CLANG_FILE}
-        echo "Fetching $URL"
-        curl -L --retry 3 --output $CLANG_FILE "$URL"
+        curl -Lo ~/repo https://storage.googleapis.com/git-repo-downloads/repo
+        chmod +x ~/repo
+        sudo mv ~/repo /usr/local/bin/repo
 
-        # 简单校验：文件大小 > 200 MB && 确认是 gzip
-        DLSIZE=$(stat -c%s "$CLANG_FILE")
-        FILETYPE=$(file -b "$CLANG_FILE")
-        if [ $DLSIZE -lt 200000000 ] || [[ "$FILETYPE" != *"gzip compressed"* ]]; then
-          echo "Download looks wrong (size=$DLSIZE, type=$FILETYPE)" >&2
-          exit 1
-        fi
-
-        tar -xf $CLANG_FILE
-        rm  $CLANG_FILE
-
-    # 5. 环境变量
-    - name: Export toolchain
+    - name: Initialize repo and sync
       run: |
-        echo "$PWD/${TOOLCHAIN_DIR}/bin" >> "$GITHUB_PATH"
-        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+        mkdir -p kernel_workspace && cd kernel_workspace
+        repo init -u https://github.com/HanKuCha/kernel_manifest.git \
+                  -b refs/heads/oneplus/sm8750 \
+                  -m JiuGeFaCai_oneplus_13_v.xml --depth=1
+        repo sync -c -j$(nproc) --no-tags
+        rm kernel_platform/common/android/abi_gki_protected_exports_* || true
+        rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || true
 
-    # 6. defconfig
-    - name: Generate defconfig
+    ##########################################################################
+    # 3 · 自定义补丁
+    ##########################################################################
+    - name: Apply HMBird GKI patch
       run: |
-        make O=out CC=clang $DEFCONFIG
+        cd kernel_workspace/kernel_platform/common/drivers
+        cat > hmbird_patch.c << 'EOF'
+        #include <linux/init.h>
+        #include <linux/module.h>
+        #include <linux/of.h>
+        #include <linux/slab.h>
+        #include <linux/string.h>
+        static int __init hmbird_patch_init(void)
+        {
+            struct device_node *np = of_find_node_by_path("/soc/oplus,hmbird/version_type");
+            const char *type;
+            if (!np || of_property_read_string(np, "type", &type))
+                return 0;
+            if (!strcmp(type, "HMBIRD_OGKI")) {
+                struct property *prop = of_find_property(np, "type", NULL);
+                struct property *newp = kzalloc(sizeof(*prop), GFP_KERNEL);
+                if (!prop || !newp)
+                    return 0;
+                memcpy(newp, prop, sizeof(*prop));
+                newp->value   = kstrdup("HMBIRD_GKI", GFP_KERNEL);
+                newp->length  = strlen("HMBIRD_GKI") + 1;
+                of_remove_property(np, prop);
+                of_add_property(np, newp);
+                pr_info("hmbird_patch: converted OGKI -> GKI\n");
+            }
+            of_node_put(np);
+            return 0;
+        }
+        early_initcall(hmbird_patch_init);
+        MODULE_LICENSE("GPL");
+        MODULE_DESCRIPTION("Force HMBIRD_GKI version");
+        EOF
+        grep -q "hmbird_patch.o" Makefile || echo "obj-y += hmbird_patch.o" >> Makefile
+        cd ../../../
+        git add -A && git commit -m "Add HMBird GKI patch" || true
 
-    # 7. 编译
-    - name: Build kernel
+    - name: Apply LZ4KD patches
+      if: ${{ inputs.enable_feature_y }}
       run: |
-        make -j$(nproc) O=out CC=clang CROSS_COMPILE=${{ env.CROSS_COMPILE }}
+        cd kernel_workspace
+        git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git
+        cp SukiSU_patch/other/zram/zram_patch/6.6/lz4kd.patch kernel_platform/common/
+        cd kernel_platform/common
+        patch -p1 -F3 < lz4kd.patch || true
 
-    # 8. 打包
+    - name: Add sched_ext
+      if: ${{ inputs.enable_feature_z }}
+      run: |
+        cd kernel_workspace/kernel_platform
+        git clone --depth=1 https://github.com/HanKuCha/sched_ext.git
+        cp -r sched_ext/* common/kernel/sched
+        rm -rf sched_ext .git
+
+    ##########################################################################
+    # 4 · 修改 defconfig
+    ##########################################################################
+    - name: Update kernel config & metadata
+      run: |
+        DEF=$DEFCONFIG_PATH
+        # 通用
+        cat >> $DEF <<'CFG'
+        CONFIG_LOCALVERSION_AUTO=n
+        CONFIG_TCP_CONG_ADVANCED=y
+        CONFIG_TCP_CONG_BBR=y
+        CONFIG_NET_SCH_FQ=y
+        CONFIG_DEFAULT_TCP_CONG="bbr"
+        CONFIG_CRYPTO_LZ4HC=y
+        CONFIG_CRYPTO_LZ4K=y
+        CONFIG_CRYPTO_LZ4KD=y
+        CONFIG_CRYPTO_842=y
+        CFG
+        # 条件
+        [[ "${{ inputs.enable_feature_x }}" == "true" ]] && echo 'CONFIG_KPM=y' >> $DEF
+        # 后缀
+        sed -i 's/-4k/${{ github.event.inputs.KERNEL_SUFFIX }}/' $DEF
+        # 跳过 GKI 校验
+        sed -i 's/check_defconfig//' kernel_workspace/kernel_platform/common/build.config.gki
+
+    ##########################################################################
+    # 5 · 编译
+    ##########################################################################
+    - name: Build kernel (LLVM toolchain)
+      run: |
+        export KBUILD_BUILD_TIMESTAMP="${{ github.event.inputs.KERNEL_TIME }}"
+        export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$PATH"
+        export PATH="/usr/lib/ccache:$PATH"
+        sudo apt-get install -y libelf-dev
+        cd kernel_workspace/kernel_platform/common
+        make -j$(nproc) LLVM=1 LLVM_IAS=1 \
+             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+             O=out gki_defconfig all
+
+    ##########################################################################
+    # 6 · 打包产物
+    ##########################################################################
     - name: Package artifacts
       run: |
         mkdir -p dist
-        cp out/arch/arm64/boot/Image.gz-dtb dist/
-        # 若需 boot.img，可在此处调用 mkbootimg
+        cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image.gz-dtb dist/
 
-    # 9. 上传
-    - uses: actions/upload-artifact@v4
+    - name: Upload Image.gz-dtb
+      uses: actions/upload-artifact@v4
       with:
-        name: kernel-${{ github.sha }}
-        path: dist
+        name: Image_${{ github.sha }}
+        path: dist/Image.gz-dtb
