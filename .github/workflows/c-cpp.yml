@@ -3,10 +3,10 @@ name: Android-Kernel CI (SDM845)
 
 on:
   push:
-    branches: [ "lineage-21" ]      # 默认分支
+    branches: [ lineage-21 ]
   pull_request:
-    branches: [ "lineage-21" ]      # PR 也触发
-  workflow_dispatch:                # 允许手动 Run
+    branches: [ lineage-21 ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,67 +15,79 @@ jobs:
     env:
       ARCH: arm64
       SUBARCH: arm64
-      CLANG_VERSION: r498229b        # 升级工具链只改这一行
+      # ---------- 自定义区 ----------
+      CLANG_TAG:  clang-r498229b          # Release 标签
+      CLANG_FILE: clang-r498229b.tar.gz   # 资产文件
+      DEFCONFIG:  vendor/meizu_sdm845_defconfig
       TOOLCHAIN_DIR: clang
-      DEFCONFIG: vendor/meizu_sdm845_defconfig   # ← 按需调整
+      # --------------------------------
 
     steps:
-    # 1. 拉源码
-    - name: Checkout source
-      uses: actions/checkout@v4
+    # 1. 取源码
+    - uses: actions/checkout@v4
 
-    # 2. 安装依赖
-    - name: Install build deps
+    # 2. 依赖
+    - name: Install deps
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y \
           bc bison flex libssl-dev libelf-dev dwarves \
           build-essential cpio python3 curl
 
-    # 3. 恢复或下载 clang 工具链
-    - name: Cache clang toolchain
+    # 3. 工具链缓存
+    - name: Cache clang
       id: cache-clang
       uses: actions/cache@v4
       with:
         path: ${{ env.TOOLCHAIN_DIR }}
-        key: ${{ runner.os }}-${{ env.CLANG_VERSION }}
+        key: >-
+          ${{ runner.os }}-${{ env.CLANG_TAG }}
 
-    - name: Download clang (if cache miss)
+    # 4. 下载并解压（若缓存未命中）
+    - name: Download clang release
       if: steps.cache-clang.outputs.cache-hit != 'true'
       run: |
         set -e
-        URL="https://github.com/ClangBuiltLinux/tc-release/raw/main/clang-${CLANG_VERSION}.tar.gz"
+        URL=https://github.com/ClangBuiltLinux/tc-release/releases/download/${CLANG_TAG}/${CLANG_FILE}
         echo "Fetching $URL"
-        curl -L --retry 3 --output clang.tar.gz "$URL"
-        tar -xf clang.tar.gz
-        rm clang.tar.gz
+        curl -L --retry 3 --output $CLANG_FILE "$URL"
 
-    # 4. 设置环境变量
-    - name: Export toolchain to PATH
+        # 简单校验：文件大小 > 200 MB && 确认是 gzip
+        DLSIZE=$(stat -c%s "$CLANG_FILE")
+        FILETYPE=$(file -b "$CLANG_FILE")
+        if [ $DLSIZE -lt 200000000 ] || [[ "$FILETYPE" != *"gzip compressed"* ]]; then
+          echo "Download looks wrong (size=$DLSIZE, type=$FILETYPE)" >&2
+          exit 1
+        fi
+
+        tar -xf $CLANG_FILE
+        rm  $CLANG_FILE
+
+    # 5. 环境变量
+    - name: Export toolchain
       run: |
         echo "$PWD/${TOOLCHAIN_DIR}/bin" >> "$GITHUB_PATH"
         echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
-    # 5. 生成 defconfig
+    # 6. defconfig
     - name: Generate defconfig
       run: |
         make O=out CC=clang $DEFCONFIG
 
-    # 6. 编译
+    # 7. 编译
     - name: Build kernel
       run: |
         make -j$(nproc) O=out CC=clang CROSS_COMPILE=${{ env.CROSS_COMPILE }}
 
-    # 7. 打包产物
+    # 8. 打包
     - name: Package artifacts
       run: |
         mkdir -p dist
         cp out/arch/arm64/boot/Image.gz-dtb dist/
-        # 如需 boot.img → 在此处调用 mkbootimg/AnyKernel3
+        # 若需 boot.img，可在此处调用 mkbootimg
 
-    # 8. 上传产物
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+    # 9. 上传
+    - uses: actions/upload-artifact@v4
       with:
         name: kernel-${{ github.sha }}
         path: dist
