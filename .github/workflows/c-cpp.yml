@@ -1,9 +1,8 @@
-# .github/workflows/build-kernel.yml
-name: meizu_sdm845   # 只是显示名称，可自行改
+name: meizu_sdm845
 
 on:
   push:
-    branches: [ lineage-21 ]     # 触发分支
+    branches: [ lineage-21 ]
   pull_request:
     branches: [ lineage-21 ]
   workflow_dispatch:
@@ -46,7 +45,7 @@ jobs:
     #####################################################################
     # 1 · 准备环境
     #####################################################################
-    - uses: actions/checkout@v4   # 仅 checkout 当前 CI 仓库
+    - uses: actions/checkout@v4   # 只 checkout 当前 CI 仓库
 
     - name: Configure git
       run: |
@@ -57,7 +56,8 @@ jobs:
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y \
-          clang-17 lld-17 llvm-17-dev gcc-aarch64-linux-gnu \
+          clang-17 lld-17 llvm-17-dev \
+          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
           bc bison flex libssl-dev libelf-dev dwarves \
           build-essential cpio python3 ccache
 
@@ -84,7 +84,7 @@ jobs:
     - name: Prepare defconfig
       run: |
         cd kernel_workspace/kernel
-        # 生成官方 defconfig（请确认文件名）
+        # 请确认 defconfig 文件名；此处用 mz845_defconfig
         make O=out LLVM=1 LLVM_IAS=1 mz845_defconfig
         # 关闭自动版本号，追加自定义后缀
         sed -i 's/CONFIG_LOCALVERSION_AUTO=y/CONFIG_LOCALVERSION_AUTO=n/' out/.config
@@ -97,6 +97,7 @@ jobs:
       run: |
         export KBUILD_BUILD_TIMESTAMP="${{ github.event.inputs.KERNEL_TIME }}"
         export PATH="/usr/lib/ccache:$PATH"
+        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-   # 32-bit 兼容工具链
         cd kernel_workspace/kernel
         make -j$(nproc) O=out \
              LLVM=1 LLVM_IAS=1 \
