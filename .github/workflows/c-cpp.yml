@@ -85,7 +85,7 @@ jobs:
       run: |
         cd kernel_workspace/kernel
         # 生成官方 defconfig（请确认文件名）
-        make O=out LLVM=1 LLVM_IAS=1 vendor/mz845_defconfig
+        make O=out LLVM=1 LLVM_IAS=1 mz845_defconfig
         # 关闭自动版本号，追加自定义后缀
         sed -i 's/CONFIG_LOCALVERSION_AUTO=y/CONFIG_LOCALVERSION_AUTO=n/' out/.config
         echo 'CONFIG_LOCALVERSION="${{ github.event.inputs.KERNEL_SUFFIX }}"' >> out/.config
