@@ -1,0 +1,65 @@
+# .github/workflows/build-kernel.yml
+name: Android-Kernel CI (SDM845)
+
+on:
+  push:
+    branches: [ "lineage-21" ]      # 默认分支
+  pull_request:
+    branches: [ "lineage-21" ]      # PR 也触发
+  workflow_dispatch:                # 允许手动 Run
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+
+    steps:
+    # 1. 拉取源码
+    - name: Checkout source
+      uses: actions/checkout@v4
+
+    # 2. 安装编译依赖
+    - name: Install build deps
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          bc bison flex libssl-dev libelf-dev dwarves \
+          build-essential cpio python3
+
+    # 3. 下载并解压预编译 Clang-17 工具链
+    - name: Fetch clang toolchain
+      run: |
+        wget -q https://github.com/ClangBuiltLinux/tc-release/raw/main/clang-r498229b.tar.gz
+        tar -xf clang-r498229b.tar.gz
+        echo "$PWD/clang/bin" >> $GITHUB_PATH          # 置入 PATH
+        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+
+    # 4. 生成 defconfig（请改成你的设备配置）
+    - name: Generate defconfig
+      run: |
+        make O=out \
+             CC=clang \
+             vendor/meizu_sdm845_defconfig
+
+    # 5. 编译内核
+    - name: Build kernel
+      run: |
+        make -j$(nproc) O=out \
+             CC=clang \
+             CROSS_COMPILE=${{ env.CROSS_COMPILE }}
+
+    # 6. 打包产物（示例仅复制 Image.gz-dtb，可自行添加 mkbootimg）
+    - name: Package artifacts
+      run: |
+        mkdir -p dist
+        cp out/arch/arm64/boot/Image.gz-dtb dist/
+
+    # 7. 上传产物
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-${{ github.sha }}
+        path: dist
