@@ -113,19 +113,20 @@ jobs:
              all
 
     #####################################################################
-    # 5 · 打包产物：Image-dtb（未压缩）
+    # 5 · 打包产物：Image 和 DTB（未压缩，分开）
     #####################################################################
-    - name: Package Image-dtb
+    - name: Package kernel and dtb
       run: |
         mkdir -p dist
-        # 确保内核 Image 存在
-        cp kernel_workspace/kernel/out/arch/arm64/boot/Image dist/Image
-        # 合并 Image + 所有 DTB（你也可以只拼接一个 DTB）
-        cat dist/Image kernel_workspace/kernel/out/arch/arm64/boot/dts/qcom/*.dtb > dist/Image-dtb
-        rm dist/Image
+        # 拷贝编译完成的 Image（kernel）
+        cp kernel_workspace/kernel/out/arch/arm64/boot/Image dist/kernel
+        # 合并所有 DTB 为一个
+        cat kernel_workspace/kernel/out/arch/arm64/boot/dts/qcom/*.dtb > dist/kernel-dtb
 
-    - name: Upload artifact
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Image_${{ github.sha }}
-        path: dist/Image-dtb
+        name: Kernel_and_DTB_${{ github.sha }}
+        path: |
+          dist/kernel
+          dist/kernel-dtb
